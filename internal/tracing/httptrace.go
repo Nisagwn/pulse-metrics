@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	pb "github.com/nisah/pulse-metrics/internal/proto"
 )
@@ -13,6 +14,19 @@ const (
 	TraceParentHeader = "traceparent"
 	TraceStateHeader  = "tracestate"
 )
+
+// PeerServiceAttr: gelen istegin hangi servisten geldigi.
+//
+// Bu oznitelik topolojinin ingest sirasinda hesaplanmasini mumkun kilar.
+// Olmasaydi, collector bir SERVER span'i gordugunde ebeveyninin hangi
+// serviste oldugunu bilemez, ogrenmek icin ek okuma yapmasi gerekirdi.
+const PeerServiceAttr = "peer.service"
+
+// tracestateKey: kendi servis adimizi tasidigimiz tracestate anahtari.
+// tracestate W3C'de tam olarak bunun icin ayrilmistir: saticiya ozel,
+// virgulle ayrilmis anahtar=deger ciftleri. Standart disi bir baslik
+// uydurmak yerine standardin ayirdigi alani kullaniyoruz.
+const tracestateKey = "pulse"
 
 // Middleware: gelen HTTP isteklerini otomatik olarak enstrumante eder.
 //
@@ -42,8 +56,16 @@ func (t *Tracer) Middleware(next http.Handler) http.Handler {
 		// Gelen baglami cozmeye calis. Gecersizse yeni bir trace baslar -
 		// hatali bir baslik yuzunden istegi reddetmek dogru olmaz.
 		if parent, err := ParseTraceParent(r.Header.Get(TraceParentHeader)); err == nil {
-			parent.TraceState = r.Header.Get(TraceStateHeader)
+			state := r.Header.Get(TraceStateHeader)
+			parent.TraceState = state
 			opts = append(opts, WithRemoteParent(parent))
+
+			// Cagiran servisi tracestate'ten cikar ve span'e yaz.
+			if caller := callerFromTraceState(state); caller != "" {
+				opts = append(opts, WithAttributes(map[string]string{
+					PeerServiceAttr: caller,
+				}))
+			}
 		}
 
 		// Operasyon adi olarak "GET /orders" gibi bir sey kullaniyoruz.
@@ -154,9 +176,11 @@ func (tt *tracingTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	outReq := req.Clone(ctx)
 	sc := span.SpanContext()
 	outReq.Header.Set(TraceParentHeader, sc.TraceParent())
-	if sc.TraceState != "" {
-		outReq.Header.Set(TraceStateHeader, sc.TraceState)
-	}
+
+	// Kendi servis adimizi tracestate'e yaz. Karsi taraf bunu peer.service
+	// olarak kaydedecek ve collector topolojiyi ek okuma yapmadan cikaracak.
+	outReq.Header.Set(TraceStateHeader,
+		withCaller(sc.TraceState, tt.tracer.serviceName))
 
 	resp, err := tt.base.RoundTrip(outReq)
 	if err != nil {
@@ -177,4 +201,63 @@ func (tt *tracingTransport) RoundTrip(req *http.Request) (*http.Response, error)
 // Client: enstrumante edilmis bir http.Client dondurur.
 func (t *Tracer) Client() *http.Client {
 	return &http.Client{Transport: t.Transport(nil)}
+}
+
+// --- tracestate yardimcilari -----------------------------------------------
+
+// withCaller: mevcut tracestate'e "pulse=svc:<ad>" girdisini ekler.
+//
+// W3C kurallari: en son degistiren en basta olur, ayni anahtar iki kez
+// bulunmaz, en fazla 32 girdi. Bu yuzden once kendi anahtarimizi
+// temizleyip basa ekliyoruz.
+func withCaller(state, service string) string {
+	if service == "" {
+		return state
+	}
+
+	entry := tracestateKey + "=svc:" + sanitizeTraceStateValue(service)
+
+	var kept []string
+	for _, part := range strings.Split(state, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" || strings.HasPrefix(part, tracestateKey+"=") {
+			continue
+		}
+		kept = append(kept, part)
+		if len(kept) >= 31 { // kendi girdimizle birlikte 32
+			break
+		}
+	}
+
+	if len(kept) == 0 {
+		return entry
+	}
+	return entry + "," + strings.Join(kept, ",")
+}
+
+// callerFromTraceState: "pulse=svc:<ad>" girdisinden servis adini cikarir.
+func callerFromTraceState(state string) string {
+	for _, part := range strings.Split(state, ",") {
+		part = strings.TrimSpace(part)
+		if !strings.HasPrefix(part, tracestateKey+"=") {
+			continue
+		}
+		v := strings.TrimPrefix(part, tracestateKey+"=")
+		if strings.HasPrefix(v, "svc:") {
+			return strings.TrimPrefix(v, "svc:")
+		}
+	}
+	return ""
+}
+
+// sanitizeTraceStateValue: tracestate degerlerinde virgul ve esittir
+// isaretine izin verilmez; bicimi bozmamak icin temizliyoruz.
+func sanitizeTraceStateValue(s string) string {
+	s = strings.ReplaceAll(s, ",", "_")
+	s = strings.ReplaceAll(s, "=", "_")
+	s = strings.ReplaceAll(s, " ", "_")
+	if len(s) > 96 {
+		s = s[:96]
+	}
+	return s
 }

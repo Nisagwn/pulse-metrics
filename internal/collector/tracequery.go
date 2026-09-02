@@ -14,10 +14,8 @@ import (
 )
 
 const (
-	defaultTraceLimit    = 50
-	maxTraceLimit        = 500
-	defaultTopologyLimit = 200
-	maxTopologyLimit     = 2000
+	defaultTraceLimit = 50
+	maxTraceLimit     = 500
 )
 
 // TraceService: pb.TraceServiceServer'in ScyllaDB uzerinde calisan uygulamasi.
@@ -277,16 +275,16 @@ func (s *TraceService) ListOperations(ctx context.Context, req *pb.ListOperation
 	return resp, nil
 }
 
-// GetTopology: servisler arasi cagri grafigini hesaplar.
+// GetTopology: servisler arasi cagri grafigi.
 //
-// Topoloji ingest sirasinda degil, sorgu sirasinda hesaplaniyor. Sebebi:
-// bir SERVER span'i geldiginde ebeveyninin HANGI SERVISTE oldugunu bilmiyoruz
-// (elimizde sadece parent_span_id var). Ingest'te ogrenmek her span icin bir
-// okuma demek olurdu. Bunun yerine son N trace'i ornekleyip ebeveyn-cocuk
-// baglarini yuruyoruz.
+// Faz 2'de bu fonksiyon son N trace'i orneklemek, her birini spans
+// tablosundan okumak ve ebeveyn-cocuk baglarini yurumek zorundaydi:
+// tek bir cagri onlarca partition okumasi demekti.
 //
-// Takas: buyuk hacimde bu sorgu yavaslar. Gercek olcekte kenarlarin bir akis
-// isleyicisiyle onceden hesaplanmasi gerekir - Faz 3 isi.
+// Faz 3'te kenarlar ingest sirasinda service_edges tablosuna yaziliyor
+// (SDK cagiran servisin adini tracestate ile tasiyor, collector onu
+// peer.service ozniteliginden okuyor). Burada sadece o kenarlari
+// okuyup toplamak kaliyor - ornekleme yok, tahmin yok, tam sayim.
 func (s *TraceService) GetTopology(ctx context.Context, req *pb.TopologyRequest) (*pb.ServiceTopology, error) {
 	now := time.Now()
 	end := req.GetEndTimeMs()
@@ -297,141 +295,134 @@ func (s *TraceService) GetTopology(ctx context.Context, req *pb.TopologyRequest)
 	if start <= 0 {
 		start = now.Add(-time.Hour).UnixMilli()
 	}
-
-	sampleLimit := int(req.GetSampleLimit())
-	if sampleLimit <= 0 {
-		sampleLimit = defaultTopologyLimit
-	}
-	if sampleLimit > maxTopologyLimit {
-		sampleLimit = maxTopologyLimit
+	if start > end {
+		return nil, status.Error(codes.InvalidArgument, "start_time_ms, end_time_ms'den buyuk olamaz")
 	}
 
-	// Once hangi servisler var?
-	ops, err := s.ListOperations(ctx, &pb.ListOperationsRequest{})
-	if err != nil {
-		return nil, err
-	}
-	if len(ops.Services) == 0 {
-		return &pb.ServiceTopology{TimestampMs: now.UnixMilli()}, nil
-	}
+	buckets := bucketsInRange(start, end)
 
-	// Her servisten bir miktar trace ornekle.
-	perService := sampleLimit / len(ops.Services)
-	if perService < 5 {
-		perService = 5
-	}
+	// 1) Hangi (cagiran, cagrilan) ciftleri var?
+	type pair struct{ caller, callee string }
+	pairs := map[pair]bool{}
 
-	seen := map[string]bool{}
-	var traceIDs []string
-	for _, svc := range ops.Services {
-		ids, err := s.findTraceIDs(ctx,
-			&pb.TraceQueryRequest{ServiceName: svc}, start, end, perService)
-		if err != nil {
-			continue
+	for _, bucket := range buckets {
+		iter := s.session.Query(
+			`SELECT caller_service, callee_service FROM edge_pairs WHERE time_bucket = ?`,
+			bucket).WithContext(ctx).Iter()
+		var caller, callee string
+		for iter.Scan(&caller, &callee) {
+			pairs[pair{caller, callee}] = true
 		}
-		for _, id := range ids {
-			if !seen[id] && len(traceIDs) < sampleLimit {
-				seen[id] = true
-				traceIDs = append(traceIDs, id)
-			}
+		if err := iter.Close(); err != nil {
+			return nil, status.Errorf(codes.Internal, "edge_pairs okunamadi: %v", err)
 		}
 	}
 
-	// Kenarlari ve dugum istatistiklerini biriktir.
+	// 2) Her cift icin sureleri topla.
 	type edgeAcc struct {
 		calls     int64
 		errors    int64
 		latencies []int64
 	}
-	type nodeAcc struct {
-		spans     int64
-		errors    int64
-		totalMs   float64
-		instances map[string]bool
-	}
+	edges := map[pair]*edgeAcc{}
 
-	edges := map[[2]string]*edgeAcc{}
+	type nodeAcc struct {
+		calls   int64
+		errors  int64
+		totalMs float64
+	}
 	nodes := map[string]*nodeAcc{}
 
-	for _, id := range traceIDs {
-		tr, err := s.loadTrace(ctx, id)
-		if err != nil || tr == nil {
+	touchNode := func(name string) *nodeAcc {
+		n := nodes[name]
+		if n == nil {
+			n = &nodeAcc{}
+			nodes[name] = n
+		}
+		return n
+	}
+
+	for pr := range pairs {
+		acc := &edgeAcc{}
+		for _, bucket := range buckets {
+			iter := s.session.Query(`
+				SELECT duration_ms, has_error FROM service_edges
+				WHERE caller_service = ? AND callee_service = ? AND time_bucket = ?
+				  AND timestamp_ms >= ? AND timestamp_ms <= ?`,
+				pr.caller, pr.callee, bucket, start, end).WithContext(ctx).Iter()
+
+			var (
+				duration int64
+				hasError bool
+			)
+			for iter.Scan(&duration, &hasError) {
+				acc.calls++
+				acc.latencies = append(acc.latencies, duration)
+				if hasError {
+					acc.errors++
+				}
+			}
+			if err := iter.Close(); err != nil {
+				return nil, status.Errorf(codes.Internal, "service_edges okunamadi: %v", err)
+			}
+		}
+		if acc.calls == 0 {
 			continue
 		}
+		edges[pr] = acc
 
-		byID := make(map[string]*pb.Span, len(tr.Spans))
-		for _, sp := range tr.Spans {
-			byID[sp.SpanId] = sp
+		// Dugum istatistikleri kenarlardan turetilir: bir servisin
+		// gecikmesi, ona yapilan cagrilarin gecikmesidir.
+		callee := touchNode(pr.callee)
+		callee.calls += acc.calls
+		callee.errors += acc.errors
+		for _, l := range acc.latencies {
+			callee.totalMs += float64(l)
 		}
+		touchNode(pr.caller) // cagiran da grafikte gorunmeli
+	}
 
-		for _, sp := range tr.Spans {
-			n := nodes[sp.ServiceName]
-			if n == nil {
-				n = &nodeAcc{instances: map[string]bool{}}
-				nodes[sp.ServiceName] = n
-			}
-			n.spans++
-			n.totalMs += float64(sp.EndTimeMicros-sp.StartTimeMicros) / 1000
-			isErr := sp.Status != nil && sp.Status.Code == pb.StatusCode_STATUS_CODE_ERROR
-			if isErr {
-				n.errors++
-			}
-
-			// Kenar: ebeveyn baska bir serviste ise cagri var demektir.
-			parent := byID[sp.ParentSpanId]
-			if parent == nil || parent.ServiceName == "" || parent.ServiceName == sp.ServiceName {
-				continue
-			}
-			key := [2]string{parent.ServiceName, sp.ServiceName}
-			e := edges[key]
-			if e == nil {
-				e = &edgeAcc{}
-				edges[key] = e
-			}
-			e.calls++
-			if isErr {
-				e.errors++
-			}
-			e.latencies = append(e.latencies, (sp.EndTimeMicros-sp.StartTimeMicros)/1000)
+	// 3) Hicbir kenari olmayan servisler de dugum olarak gorunmeli
+	//    (ornegin sadece kendi icinde calisan bir servis).
+	ops, err := s.ListOperations(ctx, &pb.ListOperationsRequest{})
+	if err == nil {
+		for _, svc := range ops.GetServices() {
+			touchNode(svc)
 		}
 	}
 
 	topo := &pb.ServiceTopology{TimestampMs: now.UnixMilli()}
 
 	for name, n := range nodes {
-		var errRate float64
-		if n.spans > 0 {
-			errRate = float64(n.errors) / float64(n.spans)
-		}
-		var avg float64
-		if n.spans > 0 {
-			avg = n.totalMs / float64(n.spans)
+		var errRate, avg float64
+		if n.calls > 0 {
+			errRate = float64(n.errors) / float64(n.calls)
+			avg = n.totalMs / float64(n.calls)
 		}
 		topo.Nodes = append(topo.Nodes, &pb.ServiceNode{
-			ServiceName:   name,
-			InstanceCount: int32(len(n.instances)),
-			ErrorRate:     errRate,
-			AvgLatencyMs:  avg,
+			ServiceName:  name,
+			ErrorRate:    errRate,
+			AvgLatencyMs: avg,
 		})
 	}
 	sort.Slice(topo.Nodes, func(i, j int) bool {
 		return topo.Nodes[i].ServiceName < topo.Nodes[j].ServiceName
 	})
 
-	for key, e := range edges {
-		sort.Slice(e.latencies, func(i, j int) bool { return e.latencies[i] < e.latencies[j] })
+	for pr, acc := range edges {
+		sort.Slice(acc.latencies, func(i, j int) bool { return acc.latencies[i] < acc.latencies[j] })
 		var errRate float64
-		if e.calls > 0 {
-			errRate = float64(e.errors) / float64(e.calls)
+		if acc.calls > 0 {
+			errRate = float64(acc.errors) / float64(acc.calls)
 		}
 		topo.Edges = append(topo.Edges, &pb.ServiceDependency{
-			CallerService: key[0],
-			CalleeService: key[1],
-			CallCount:     e.calls,
+			CallerService: pr.caller,
+			CalleeService: pr.callee,
+			CallCount:     acc.calls,
 			ErrorRate:     errRate,
-			P50LatencyMs:  pickPercentile(e.latencies, 0.50),
-			P95LatencyMs:  pickPercentile(e.latencies, 0.95),
-			P99LatencyMs:  pickPercentile(e.latencies, 0.99),
+			P50LatencyMs:  pickPercentile(acc.latencies, 0.50),
+			P95LatencyMs:  pickPercentile(acc.latencies, 0.95),
+			P99LatencyMs:  pickPercentile(acc.latencies, 0.99),
 		})
 	}
 	sort.Slice(topo.Edges, func(i, j int) bool {

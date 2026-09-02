@@ -94,7 +94,7 @@ rows instead of overwriting each other.
 | dashboard     | 8080    | React panel + JSON API       |
 | agent health  | 8081    | `/healthz`, `/readyz`        |
 | collector     | 8082    | `/healthz`, `/readyz`        |
-| collector     | 50051   | gRPC `MetricsService`        |
+| collector     | 50051   | gRPC Metrics/Trace/Log/Alert |
 | Kafka         | 9092    |                              |
 | ScyllaDB      | 9042    | CQL                          |
 | Prometheus    | 9090    |                              |
@@ -110,6 +110,22 @@ Kullanici adi ve parola `admin` / `admin` (docker-compose.yml icinde tanimli).
 Ama Grafana'da PulseMetrics verisi **yok**: Prometheus bu servisleri kazimiyor
 ve ScyllaDB icin bir Grafana datasource'u tanimli degil. Metrik ve trace'ler
 icin http://localhost:8080 adresindeki kendi panelini kullan.
+
+## Uc ayak birlikte
+
+```bash
+# 1) Hatali bir log bul
+curl "localhost:8080/api/v1/logs?service=payments&range=15m&levels=ERROR&limit=1"
+
+# 2) Cikan trace_id ile o istegin TUM servislerdeki loglarini al
+curl "localhost:8080/api/v1/trace-logs?id=<trace_id>"
+
+# 3) Ayni trace'in span'lerini gor: nerede yavasladi?
+curl "localhost:8080/api/v1/trace?id=<trace_id>"
+```
+
+Panelde ayni sey iki tiklama: Loglar sekmesinde bir trace_id'ye tikla,
+trace'in waterfall'i ve altinda o trace'in loglari acilir.
 
 ## Tests
 

@@ -1,4 +1,4 @@
-.PHONY: help build proto docker logs clean test test-integration test-all health run-demo
+.PHONY: help build proto docker logs clean test test-integration test-all health run-demo alerts evaluate
 
 # Colors for output
 BLUE := \033[0;36m
@@ -27,7 +27,7 @@ docker-up:
 	@echo "$(BLUE)Starting Docker Compose...$(NC)"
 	docker-compose up -d
 	@echo "$(GREEN)Services started!$(NC)"
-	@echo "  Kafka: localhost:9092"
+	@echo "  Kafka: localhost:9092 (topics: pulse-metrics, pulse-traces, pulse-logs)"
 	@echo "  ScyllaDB: localhost:9042"
 	@echo "  Prometheus: http://localhost:9090"
 	@echo "  Grafana: http://localhost:3000 (admin/admin)"
@@ -120,6 +120,15 @@ health:
 	@curl -s localhost:8081/readyz && echo ""
 	@curl -s localhost:8082/readyz && echo ""
 	@curl -s localhost:8080/readyz && echo ""
+
+alerts:
+	@echo "$(BLUE)Alarm kurallari ve son alarmlar:$(NC)"
+	@curl -s localhost:8080/api/v1/rules && echo ""
+	@curl -s "localhost:8080/api/v1/alerts?range=24h" && echo ""
+
+evaluate:
+	@echo "$(BLUE)Kurallari simdi degerlendir:$(NC)"
+	@curl -s -X POST localhost:8080/api/v1/evaluate && echo ""
 
 # Cleaning
 clean:

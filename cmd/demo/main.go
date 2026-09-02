@@ -30,6 +30,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/nisah/pulse-metrics/internal/logging"
 	pb "github.com/nisah/pulse-metrics/internal/proto"
 	"github.com/nisah/pulse-metrics/internal/tracing"
 )
@@ -38,6 +39,7 @@ type service struct {
 	name   string
 	addr   string
 	tracer *tracing.Tracer
+	log    *logging.Logger
 	client *http.Client
 	server *http.Server
 }
@@ -56,10 +58,22 @@ func newService(name, addr, kafkaAddr string, sampleRatio float64) *service {
 		tracing.WithSampler(tracing.NewRatioSampler(sampleRatio)),
 	)
 
+	// Logger: context'teki aktif span'den trace_id/span_id otomatik alinir.
+	logger := logging.New(logging.Config{
+		KafkaBrokers:  []string{kafkaAddr},
+		ServiceName:   name,
+		InstanceID:    "demo-1",
+		LoggerName:    name,
+		MinLevel:      pb.LogLevel_LEVEL_INFO,
+		BatchSize:     32,
+		FlushInterval: time.Second,
+	})
+
 	return &service{
 		name:   name,
 		addr:   addr,
 		tracer: tracer,
+		log:    logger,
 		client: tracer.Client(), // giden cagrilar otomatik enstrumante
 	}
 }
@@ -82,6 +96,9 @@ func (s *service) shutdown(ctx context.Context) {
 		_ = s.server.Shutdown(ctx)
 	}
 	_ = s.tracer.Shutdown(ctx)
+	if s.log != nil {
+		_ = s.log.Shutdown(ctx)
+	}
 }
 
 // get: baska bir servise enstrumante edilmis cagri.
@@ -143,9 +160,14 @@ func main() {
 		span.SetAttribute("user.tier", []string{"free", "pro"}[rand.Intn(2)])
 		span.End()
 
+		gateway.log.Info(ctx, "checkout istegi alindi", map[string]string{
+			"path": r.URL.Path,
+		})
+
 		result, err := gateway.get(ctx, ordersURL+"/orders")
 		if err != nil {
 			tracing.SpanFromContext(r.Context()).RecordError(err)
+			gateway.log.Error(ctx, "checkout basarisiz", err, nil)
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 			return
 		}
@@ -180,17 +202,25 @@ func main() {
 
 		if payErr != nil {
 			tracing.SpanFromContext(ctx).RecordError(payErr)
+			orders.log.Error(ctx, "odeme adimi basarisiz", payErr,
+				map[string]string{"step": "payments"})
 			writeJSON(w, http.StatusPaymentRequired, map[string]string{"error": payErr.Error()})
 			return
 		}
 		if invErr != nil {
 			tracing.SpanFromContext(ctx).RecordError(invErr)
+			orders.log.Error(ctx, "stok adimi basarisiz", invErr,
+				map[string]string{"step": "inventory"})
 			writeJSON(w, http.StatusConflict, map[string]string{"error": invErr.Error()})
 			return
 		}
 
+		orderID := fmt.Sprintf("ord-%06d", rand.Intn(999999))
+		orders.log.Info(ctx, "siparis olusturuldu "+orderID,
+			map[string]string{"order_id": orderID})
+
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"order_id":  fmt.Sprintf("ord-%06d", rand.Intn(999999)),
+			"order_id":  orderID,
 			"payment":   payRes,
 			"inventory": invRes,
 		})
@@ -206,6 +236,8 @@ func main() {
 		// %8 ihtimalle odeme saglayicisi yavas - "kuyruk gecikmesi".
 		if rand.Float64() < 0.08 {
 			span.AddEvent("provider.slow", map[string]string{"provider": "stripe-sim"})
+			payments.log.Warn(ctx, "odeme saglayicisi yavas yanit veriyor",
+				map[string]string{"provider": "stripe-sim"})
 			jitter(180*time.Millisecond, 220*time.Millisecond)
 		} else {
 			jitter(8*time.Millisecond, 20*time.Millisecond)
@@ -214,6 +246,9 @@ func main() {
 		// %6 ihtimalle kart reddedildi.
 		if rand.Float64() < 0.06 {
 			span.SetAttribute("payment.decline_code", "insufficient_funds")
+			payments.log.Error(ctx, fmt.Sprintf("kart reddedildi: yetersiz bakiye, tutar %.2f",
+				10+rand.Float64()*200), nil,
+				map[string]string{"decline_code": "insufficient_funds"})
 			writeJSON(w, http.StatusInternalServerError,
 				map[string]string{"error": "kart reddedildi"})
 			return
@@ -245,7 +280,10 @@ func main() {
 		dbSpan.End()
 
 		if rand.Float64() < 0.04 {
-			tracing.SpanFromContext(ctx).SetAttribute("inventory.sku", "SKU-OUT")
+			sku := fmt.Sprintf("SKU-%04d", rand.Intn(9999))
+			tracing.SpanFromContext(ctx).SetAttribute("inventory.sku", sku)
+			inventory.log.Error(ctx, "stok yetersiz: "+sku, nil,
+				map[string]string{"sku": sku})
 			writeJSON(w, http.StatusInternalServerError,
 				map[string]string{"error": "stok yetersiz"})
 			return

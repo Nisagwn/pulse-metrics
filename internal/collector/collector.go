@@ -33,6 +33,13 @@ type Config struct {
 	TracesGroupID string // bos ise "pulse-collector-traces"
 	DisableTraces bool   // testlerde trace tuketimini kapatmak icin
 
+	// Log ve alarm tarafi (Faz 3).
+	LogsTopic     string // bos ise "pulse-logs"
+	LogsGroupID   string // bos ise "pulse-collector-logs"
+	DisableLogs   bool
+	DisableAlerts bool
+	AlertInterval time.Duration // bos ise 30s
+
 	Debug bool
 }
 
@@ -43,6 +50,8 @@ type Collector struct {
 	session     *gocql.Session
 	reader      *kafka.Reader
 	traceReader *kafka.Reader
+	logReader   *kafka.Reader
+	alerts      *AlertEngine
 	started     time.Time
 
 	mu      sync.Mutex
@@ -147,6 +156,12 @@ func NewCollector(cfg *Config) (*Collector, error) {
 		return nil, err
 	}
 
+	// Log, kenar ve alarm tablolari (Faz 3).
+	if err := ensurePhase3Schema(session, logger); err != nil {
+		session.Close()
+		return nil, err
+	}
+
 	topic := cfg.Topic
 	if topic == "" {
 		topic = DefaultTopic
@@ -169,12 +184,24 @@ func NewCollector(cfg *Config) (*Collector, error) {
 		traceReader = newTraceReader(cfg)
 	}
 
+	var logReader *kafka.Reader
+	if !cfg.DisableLogs {
+		logReader = newLogReader(cfg)
+	}
+
+	var engine *AlertEngine
+	if !cfg.DisableAlerts {
+		engine = NewAlertEngine(session, logger, cfg.AlertInterval)
+	}
+
 	return &Collector{
 		config:      cfg,
 		logger:      logger,
 		session:     session,
 		reader:      reader,
 		traceReader: traceReader,
+		logReader:   logReader,
+		alerts:      engine,
 		started:     time.Now(),
 	}, nil
 }
@@ -207,7 +234,7 @@ func (c *Collector) Start(ctx context.Context) error {
 		zap.String("health", c.config.HealthAddr),
 	)
 
-	errCh := make(chan error, 4)
+	errCh := make(chan error, 6)
 	var wg sync.WaitGroup
 
 	wg.Add(1)
@@ -221,6 +248,20 @@ func (c *Collector) Start(ctx context.Context) error {
 		defer wg.Done()
 		errCh <- c.consumeTraces(ctx)
 	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		errCh <- c.consumeLogs(ctx)
+	}()
+
+	if c.alerts != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errCh <- c.alerts.Run(ctx)
+		}()
+	}
 
 	wg.Add(1)
 	go func() {
@@ -258,6 +299,8 @@ func (c *Collector) serveGRPC(ctx context.Context) error {
 	srv := grpc.NewServer()
 	pb.RegisterMetricsServiceServer(srv, NewMetricsService(c.session, c.logger, c.started))
 	pb.RegisterTraceServiceServer(srv, NewTraceService(c.session, c.logger))
+	pb.RegisterLogServiceServer(srv, NewLogServiceServer(c.session, c.logger))
+	pb.RegisterAlertServiceServer(srv, NewAlertServiceServer(c.session, c.logger, c.alerts))
 
 	go func() {
 		<-ctx.Done()
@@ -374,23 +417,39 @@ func (c *Collector) Close() error {
 	}
 	c.stopped = true
 
-	var firstErr error
-
-	if c.reader != nil {
-		if err := c.reader.Close(); err != nil {
-			c.logger.Error("Failed to close Kafka reader", zap.Error(err))
-			firstErr = err
-		}
+	// Uc okuyucuyu PARALEL kapatiyoruz. Her biri consumer group'tan
+	// ayrilirken saniyeler surebiliyor; sirayla kapatmak kapanis suresini
+	// gereksiz yere ucler.
+	readers := map[string]*kafka.Reader{
+		"metrics": c.reader,
+		"traces":  c.traceReader,
+		"logs":    c.logReader,
 	}
 
-	if c.traceReader != nil {
-		if err := c.traceReader.Close(); err != nil {
-			c.logger.Error("Failed to close trace reader", zap.Error(err))
-			if firstErr == nil {
-				firstErr = err
+	var (
+		closeWg  sync.WaitGroup
+		errMu    sync.Mutex
+		firstErr error
+	)
+	for name, rd := range readers {
+		if rd == nil {
+			continue
+		}
+		closeWg.Add(1)
+		go func(name string, rd *kafka.Reader) {
+			defer closeWg.Done()
+			if err := rd.Close(); err != nil {
+				c.logger.Error("Kafka okuyucusu kapatilamadi",
+					zap.String("reader", name), zap.Error(err))
+				errMu.Lock()
+				if firstErr == nil {
+					firstErr = err
+				}
+				errMu.Unlock()
 			}
-		}
+		}(name, rd)
 	}
+	closeWg.Wait()
 
 	if c.session != nil {
 		c.session.Close()

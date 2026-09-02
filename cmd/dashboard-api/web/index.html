@@ -9,31 +9,38 @@
     --bg:#F4F7F8; --surface:#FFFFFF; --surface2:#EAF0F2;
     --ink:#10191E; --ink2:#47606B; --line:#D3DFE3;
     --accent:#0B6E7F; --accent2:#B4603A; --accent3:#4B7B32;
-    --danger:#A32F2F; --danger-bg:#FBEAEA; --warn:#8F5400;
+    --danger:#A32F2F; --danger-bg:#FBEAEA;
+    --warn:#8F5400; --warn-bg:#F8EBD8;
+    --info:#3D6C8A; --info-bg:#E4EDF3;
   }
   @media (prefers-color-scheme: dark){
     :root{
       --bg:#0C1418; --surface:#121D22; --surface2:#18262C;
       --ink:#E6EEF0; --ink2:#93A9B1; --line:#24363D;
       --accent:#4CC7DB; --accent2:#E39468; --accent3:#8FC96A;
-      --danger:#E8776F; --danger-bg:#33191A; --warn:#E0A250;
+      --danger:#E8776F; --danger-bg:#33191A;
+      --warn:#E0A250; --warn-bg:#32240F;
+      --info:#7FB8E0; --info-bg:#132630;
     }
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--ink);
     font:14px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
   code,.mono{font-family:ui-monospace,"JetBrains Mono",Consolas,monospace}
-  button,input,select{font:inherit;color:inherit}
+  button,input,select,textarea{font:inherit;color:inherit}
 
   header{display:flex;align-items:center;gap:20px;flex-wrap:wrap;
     padding:12px 20px;border-bottom:1px solid var(--line);background:var(--surface)}
   h1{font-size:16px;margin:0;font-weight:650;letter-spacing:-.01em}
   h1 span{color:var(--accent)}
-  nav{display:flex;gap:2px}
+  nav{display:flex;gap:2px;flex-wrap:wrap}
   nav button{border:0;background:none;color:var(--ink2);padding:7px 14px;
-    border-radius:6px;cursor:pointer;font-size:13px;font-weight:500}
+    border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;position:relative}
   nav button:hover{background:var(--surface2)}
   nav button.on{background:var(--accent);color:var(--surface);font-weight:600}
+  nav .pip{display:inline-block;min-width:17px;padding:0 5px;margin-left:6px;
+    border-radius:100px;background:var(--danger);color:#fff;font-size:10.5px;font-weight:700}
+  nav button.on .pip{background:var(--surface);color:var(--accent)}
   .status{margin-left:auto;display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink2)}
   .dot{width:8px;height:8px;border-radius:50%;background:var(--ink2)}
   .dot.ok{background:var(--accent3)} .dot.bad{background:var(--danger)}
@@ -48,12 +55,18 @@
   select,input[type=text],input[type=number]{background:var(--surface);border:1px solid var(--line);
     border-radius:6px;padding:6px 10px;font-size:12.5px}
   label.chk{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink2);cursor:pointer}
+  .btn{background:var(--surface);border:1px solid var(--line);border-radius:6px;
+    padding:6px 12px;cursor:pointer;font-size:12.5px}
+  .btn:hover{background:var(--surface2)}
+  .btn.primary{background:var(--accent);color:var(--surface);border-color:var(--accent);font-weight:600}
+  .btn.danger{color:var(--danger);border-color:var(--line)}
   .meta{margin-left:auto;font-size:12px;color:var(--ink2)}
   .card{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:18px}
   .empty{color:var(--ink2);padding:48px 0;text-align:center}
   .err{color:var(--danger);font-size:13px;margin-top:10px}
+  .dim{color:var(--ink2)}
+  h2.sec{font-size:14px;font-weight:650;margin:0 0 12px}
 
-  /* metrikler */
   .cols{display:grid;grid-template-columns:270px 1fr;gap:18px;align-items:start}
   .side{background:var(--surface);border:1px solid var(--line);border-radius:8px;
     padding:14px;max-height:78vh;overflow-y:auto}
@@ -76,21 +89,22 @@
   td{padding:8px 12px 8px 0;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
   tr:last-child td{border-bottom:0}
 
-  /* trace listesi */
   .trace-row{display:grid;grid-template-columns:150px 1fr 90px 70px 130px;gap:12px;align-items:center;
     padding:10px 12px;border-bottom:1px solid var(--line);cursor:pointer;border-radius:6px}
   .trace-row:hover{background:var(--surface2)}
   .trace-row.on{background:var(--accent);color:var(--surface)}
-  .trace-row.on .dim{color:var(--surface);opacity:.8}
-  .dim{color:var(--ink2)}
-  .badge{display:inline-block;font-size:10.5px;font-weight:650;padding:2px 7px;border-radius:100px;
-    background:var(--surface2);color:var(--ink2)}
-  .badge.err{background:var(--danger-bg);color:var(--danger)}
+  .trace-row.on .dim{color:var(--surface);opacity:.85}
   .head-row{display:grid;grid-template-columns:150px 1fr 90px 70px 130px;gap:12px;
     padding:0 12px 7px;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
     color:var(--ink2);font-weight:650;border-bottom:1px solid var(--line)}
 
-  /* waterfall */
+  .badge{display:inline-block;font-size:10.5px;font-weight:650;padding:2px 7px;border-radius:100px;
+    background:var(--surface2);color:var(--ink2);white-space:nowrap}
+  .badge.err,.badge.ERROR,.badge.FATAL,.badge.CRITICAL{background:var(--danger-bg);color:var(--danger)}
+  .badge.WARN,.badge.WARNING{background:var(--warn-bg);color:var(--warn)}
+  .badge.INFO{background:var(--info-bg);color:var(--info)}
+  .badge.ok{background:var(--surface2);color:var(--accent3)}
+
   .wf-row{display:grid;grid-template-columns:300px 1fr;gap:10px;align-items:center;
     padding:3px 0;cursor:pointer;border-radius:4px}
   .wf-row:hover{background:var(--surface2)}
@@ -108,10 +122,26 @@
   .kv dt{color:var(--ink2)}
   .kv dd{margin:0;word-break:break-all}
 
-  /* topoloji */
+  /* loglar */
+  .log-row{display:grid;grid-template-columns:96px 62px 90px 1fr;gap:12px;align-items:baseline;
+    padding:7px 10px;border-bottom:1px solid var(--line);font-size:12.5px}
+  .log-row:hover{background:var(--surface2)}
+  .log-msg{word-break:break-word}
+  .log-link{border:0;background:none;color:var(--accent);cursor:pointer;padding:0;
+    font-family:ui-monospace,Consolas,monospace;font-size:11.5px;text-decoration:underline}
+  .attrs{display:flex;flex-wrap:wrap;gap:8px;margin-top:3px}
+  .attr{font-size:11px;color:var(--ink2);font-family:ui-monospace,Consolas,monospace}
+
   .topo{display:grid;grid-template-columns:1fr 330px;gap:18px;align-items:start}
   svg.graph{display:block;width:100%;height:auto}
-  @media (max-width:900px){.cols,.topo{grid-template-columns:1fr}}
+
+  .grid2{display:grid;grid-template-columns:1fr 380px;gap:18px;align-items:start}
+  .form{display:flex;flex-direction:column;gap:10px}
+  .form label{font-size:11px;font-weight:650;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--ink2);display:block;margin-bottom:4px}
+  .form input,.form select{width:100%}
+  .hint{font-size:11.5px;color:var(--ink2);margin-top:4px}
+  @media (max-width:1000px){.cols,.topo,.grid2{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -127,14 +157,14 @@ const { useState, useEffect, useCallback, useRef, useMemo, Fragment } = React;
 const RANGES = [["15m","15 dk"],["1h","1 sa"],["6h","6 sa"],["24h","24 sa"]];
 const PALETTE = ["#0B6E7F","#B4603A","#4B7B32","#8A6FB5","#C2854A","#3D7CA8","#A0526D"];
 const PALETTE_DARK = ["#4CC7DB","#E39468","#8FC96A","#B49BE0","#DDA96B","#7FB8E0","#E08CA8"];
+const LEVELS = ["DEBUG","INFO","WARN","ERROR","FATAL"];
 
 const isDark = () => window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
 const palette = () => (isDark() ? PALETTE_DARK : PALETTE);
 
-// Servis adindan sabit bir renk uret: ayni servis her ekranda ayni renkte olsun.
 function serviceColor(name, services) {
   const p = palette();
-  const i = services.indexOf(name);
+  const i = (services || []).indexOf(name);
   if (i >= 0) return p[i % p.length];
   let h = 0;
   for (let k = 0; k < name.length; k++) h = (h * 31 + name.charCodeAt(k)) >>> 0;
@@ -154,10 +184,12 @@ function fmtVal(v, unit) {
 }
 const fmtMs = ms => ms >= 1000 ? (ms/1000).toFixed(2)+" s" : ms.toFixed(ms < 10 ? 2 : 1)+" ms";
 const clock = ms => new Date(ms).toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
-const clockU = us => new Date(us/1000).toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
+const clockU = us => clock(us/1000);
+const clockMs = ms => new Date(ms).toLocaleTimeString("tr-TR",
+  {hour:"2-digit",minute:"2-digit",second:"2-digit"}) + "." + String(ms%1000).padStart(3,"0");
 
-async function getJSON(url) {
-  const r = await fetch(url);
+async function getJSON(url, opts) {
+  const r = await fetch(url, opts);
   const j = await r.json();
   if (!r.ok) throw new Error(j.error || r.statusText);
   return j;
@@ -260,7 +292,6 @@ function MetricsTab({ onStatus }) {
             ))}
           </div>))}
       </div>
-
       <div>
         <div className="bar">
           <div className="seg">
@@ -297,9 +328,6 @@ function MetricsTab({ onStatus }) {
 
 /* ========================= TRACE'LER ========================= */
 
-// Waterfall: span'leri ebeveyn-cocuk agacina dizip zaman ekseninde cizer.
-// Bir trace'e bakmanin butun anlami bu: hangi adim ne zaman basladi,
-// ne kadar surdu, hangileri paralel calisti.
 function Waterfall({ trace, services, selected, onSelect }) {
   const spans = trace.spans || [];
   if (!spans.length) return <div className="empty">Span yok.</div>;
@@ -308,36 +336,27 @@ function Waterfall({ trace, services, selected, onSelect }) {
   const t1 = Math.max(...spans.map(s=>s.endMicros));
   const span = Math.max(1, t1 - t0);
 
-  // Agaci kur; kok bulunamazsa (span'ler henuz tamamlanmamis olabilir)
-  // ebeveyni elimizde olmayan span'leri de kok say.
   const byId = {};
   spans.forEach(s=>{ byId[s.spanId]=s; });
-  const kids = {};
-  const roots = [];
+  const kids = {}, roots = [];
   spans.forEach(s=>{
-    if (s.parentSpanId && byId[s.parentSpanId]) {
-      (kids[s.parentSpanId]=kids[s.parentSpanId]||[]).push(s);
-    } else { roots.push(s); }
+    if (s.parentSpanId && byId[s.parentSpanId]) (kids[s.parentSpanId]=kids[s.parentSpanId]||[]).push(s);
+    else roots.push(s);
   });
   const bySt = (a,b)=>a.startMicros-b.startMicros;
   roots.sort(bySt);
   Object.values(kids).forEach(a=>a.sort(bySt));
 
   const rows = [];
-  const walk = (s, depth) => {
-    rows.push({span:s, depth});
-    (kids[s.spanId]||[]).forEach(c=>walk(c, depth+1));
-  };
+  const walk = (s, depth) => { rows.push({span:s, depth}); (kids[s.spanId]||[]).forEach(c=>walk(c, depth+1)); };
   roots.forEach(r=>walk(r,0));
-
-  const ticks = [0, 0.25, 0.5, 0.75, 1];
 
   return (
     <div>
       <div className="wf-axis">
         <div></div>
         <div className="wf-ticks">
-          {ticks.map((f,i)=><span key={i}>{fmtMs(span*f/1000)}</span>)}
+          {[0,0.25,0.5,0.75,1].map((f,i)=><span key={i}>{fmtMs(span*f/1000)}</span>)}
         </div>
       </div>
       {rows.map(({span:s,depth})=>{
@@ -347,8 +366,7 @@ function Waterfall({ trace, services, selected, onSelect }) {
         const color = isErr ? "var(--danger)" : serviceColor(s.service, services);
         const labelRight = left > 70;
         return (
-          <div key={s.spanId}
-               className={"wf-row"+(selected===s.spanId?" on":"")}
+          <div key={s.spanId} className={"wf-row"+(selected===s.spanId?" on":"")}
                onClick={()=>onSelect(selected===s.spanId?null:s.spanId)}>
             <div className="wf-label" style={{paddingLeft:(depth*14)+"px"}}>
               <span className="swatch" style={{background:color}}></span>
@@ -363,8 +381,7 @@ function Waterfall({ trace, services, selected, onSelect }) {
                 {fmtMs(s.durationMs)}
               </span>
             </div>
-          </div>
-        );
+          </div>);
       })}
     </div>
   );
@@ -402,7 +419,34 @@ function SpanDetail({ span }) {
   );
 }
 
-function TracesTab({ onStatus }) {
+// TraceLogs: bir trace boyunca uretilen loglar. Uc ayagi birlestiren gorunum.
+function TraceLogs({ traceId }) {
+  const [logs,setLogs] = useState(null);
+  useEffect(()=>{ if(!traceId){setLogs(null);return;} (async()=>{
+    try { setLogs(await getJSON("/api/v1/trace-logs?id="+traceId)); } catch(e){ setLogs({logs:[]}); }
+  })(); },[traceId]);
+
+  if (!logs) return null;
+  const rows = logs.logs || [];
+
+  return (
+    <div style={{marginTop:"16px",paddingTop:"16px",borderTop:"1px solid var(--line)"}}>
+      <h2 className="sec">Bu trace'in loglari ({rows.length})</h2>
+      {rows.length===0 && <p className="dim" style={{fontSize:"12.5px",margin:0}}>
+        Bu trace icin log kaydi yok.</p>}
+      {rows.map((l,i)=>(
+        <div key={i} style={{display:"flex",gap:"10px",alignItems:"baseline",
+                             padding:"5px 0",fontSize:"12.5px",borderBottom:"1px solid var(--line)"}}>
+          <span className="dim mono" style={{fontSize:"11px",flex:"none"}}>{clockMs(l.t)}</span>
+          <span className={"badge "+l.level} style={{flex:"none"}}>{l.level}</span>
+          <span className="dim mono" style={{fontSize:"11.5px",flex:"none",minWidth:"72px"}}>{l.service}</span>
+          <span className="log-msg">{l.message}</span>
+        </div>))}
+    </div>
+  );
+}
+
+function TracesTab({ onStatus, focusTrace, clearFocus }) {
   const [services,setServices] = useState([]);
   const [service,setService] = useState("");
   const [operations,setOperations] = useState([]);
@@ -425,6 +469,9 @@ function TracesTab({ onStatus }) {
       onStatus(true);
     } catch(e){ setErr(String(e.message||e)); onStatus(false); }
   })(); },[]);
+
+  // Loglar sekmesinden bir trace'e atlandiysa onu ac.
+  useEffect(()=>{ if(focusTrace){ setSelId(focusTrace); setLive(false); clearFocus(); } },[focusTrace]);
 
   useEffect(()=>{ if(!service) return; (async()=>{
     try {
@@ -518,9 +565,312 @@ function TracesTab({ onStatus }) {
           </div>
           <Waterfall trace={trace} services={services} selected={selSpan} onSelect={setSelSpan}/>
           <SpanDetail span={selectedSpan}/>
-          {!selectedSpan && <p className="dim" style={{fontSize:"12px",marginTop:"14px",marginBottom:0}}>
-            Ayrintilari gormek icin bir span'e tikla.</p>}
+          <TraceLogs traceId={trace.traceId}/>
         </div>)}
+    </div>
+  );
+}
+
+/* ========================= LOGLAR ========================= */
+
+function LogsTab({ onStatus, onOpenTrace }) {
+  const [services,setServices] = useState([]);
+  const [service,setService] = useState("");
+  const [range,setRange] = useState("1h");
+  const [q,setQ] = useState("");
+  const [levels,setLevels] = useState([]);
+  const [data,setData] = useState(null);
+  const [patterns,setPatterns] = useState(null);
+  const [view,setView] = useState("logs");
+  const [live,setLive] = useState(true);
+  const [err,setErr] = useState(null);
+
+  useEffect(()=>{ (async()=>{
+    try {
+      const j = await getJSON("/api/v1/log-services");
+      setServices(j.services||[]);
+      if (!service && j.services && j.services.length) setService(j.services[0]);
+      onStatus(true);
+    } catch(e){ setErr(String(e.message||e)); onStatus(false); }
+  })(); },[]);
+
+  const search = useCallback(async ()=>{
+    if(!service) return;
+    try {
+      const p = new URLSearchParams({service, range, limit:"300"});
+      if (q) p.set("q", q);
+      if (levels.length) p.set("levels", levels.join(","));
+      setData(await getJSON("/api/v1/logs?"+p)); setErr(null); onStatus(true);
+    } catch(e){ setErr(String(e.message||e)); onStatus(false); }
+  },[service,range,q,levels,onStatus]);
+
+  const loadPatterns = useCallback(async ()=>{
+    if(!service) return;
+    try { setPatterns(await getJSON("/api/v1/log-patterns?service="+encodeURIComponent(service)+"&range="+range)); }
+    catch(e){ setErr(String(e.message||e)); }
+  },[service,range]);
+
+  useEffect(()=>{ if(view==="logs") search(); else loadPatterns(); },[search,loadPatterns,view]);
+  useEffect(()=>{
+    if(!live || view!=="logs") return;
+    const id=setInterval(search,5000);
+    return ()=>clearInterval(id);
+  },[live,search,view]);
+
+  const toggleLevel = lvl => setLevels(prev =>
+    prev.includes(lvl) ? prev.filter(x=>x!==lvl) : [...prev,lvl]);
+
+  const rows = (data && data.logs) || [];
+
+  return (
+    <div>
+      <div className="bar">
+        <select value={service} onChange={e=>setService(e.target.value)}>
+          {services.length===0 && <option value="">servis yok</option>}
+          {services.map(s=><option key={s} value={s}>{s}</option>)}
+        </select>
+        <div className="seg">
+          {RANGES.map(([v,l])=>(
+            <button key={v} className={range===v?"on":""} onClick={()=>setRange(v)}>{l}</button>))}
+        </div>
+        <div className="seg">
+          <button className={view==="logs"?"on":""} onClick={()=>setView("logs")}>Kayitlar</button>
+          <button className={view==="patterns"?"on":""} onClick={()=>setView("patterns")}>Kaliplar</button>
+        </div>
+        {view==="logs" && <Fragment>
+          <input type="text" placeholder="metin ara..." value={q} style={{width:"180px"}}
+                 onChange={e=>setQ(e.target.value)}/>
+          <div className="seg">
+            {LEVELS.map(l=>(
+              <button key={l} className={levels.includes(l)?"on":""}
+                      onClick={()=>toggleLevel(l)}>{l}</button>))}
+          </div>
+          <label className="chk">
+            <input type="checkbox" checked={live} onChange={e=>setLive(e.target.checked)}/> canli
+          </label>
+        </Fragment>}
+        {view==="logs" && data && <span className="meta">
+          {data.total} kayit · sorgu {data.queryTimeMs} ms</span>}
+        {view==="patterns" && patterns && <span className="meta">{patterns.description}</span>}
+      </div>
+
+      {view==="logs" ? (
+        <div className="card">
+          {rows.length===0 && <div className="empty">
+            Bu filtrelerle log bulunamadi. Demo calisiyor mu?</div>}
+          {rows.map((l,i)=>(
+            <div className="log-row" key={i}>
+              <span className="dim mono" style={{fontSize:"11px"}}>{clockMs(l.t)}</span>
+              <span className={"badge "+l.level}>{l.level}</span>
+              <span>
+                {l.traceId
+                  ? <button className="log-link" title="Trace'i ac"
+                            onClick={()=>onOpenTrace(l.traceId)}>{l.traceId.slice(0,10)}</button>
+                  : <span className="dim mono" style={{fontSize:"11.5px"}}>—</span>}
+              </span>
+              <span>
+                <span className="log-msg">{l.message}</span>
+                {l.attributes && Object.keys(l.attributes).length>0 && (
+                  <span className="attrs">
+                    {Object.entries(l.attributes).map(([k,v])=>(
+                      <span className="attr" key={k}>{k}={v}</span>))}
+                  </span>)}
+              </span>
+            </div>))}
+          {err && <div className="err">Hata: {err}</div>}
+        </div>
+      ) : (
+        <div className="card">
+          <p className="dim" style={{fontSize:"12.5px",marginTop:0}}>
+            Degisken parcalar (sayilar, kimlikler, IP'ler) maskelenip ayni kalip birlestirildi.
+            Hata korelasyonu yuksek olanlar once.
+          </p>
+          {(!patterns || !(patterns.patterns||[]).length) && <div className="empty">Kalip bulunamadi.</div>}
+          {patterns && (patterns.patterns||[]).length>0 && (
+            <table>
+              <thead><tr><th>Kalip</th><th>Adet</th><th>Hata orani</th></tr></thead>
+              <tbody>
+                {patterns.patterns.map((p,i)=>(
+                  <tr key={i}>
+                    <td className="mono" style={{fontSize:"12px"}}>{p.pattern}</td>
+                    <td>{p.count}</td>
+                    <td style={p.errorCorrelation>0.5?{color:"var(--danger)",fontWeight:650}:null}>
+                      %{(p.errorCorrelation*100).toFixed(0)}</td>
+                  </tr>))}
+              </tbody>
+            </table>)}
+          {err && <div className="err">Hata: {err}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ========================= ALARMLAR ========================= */
+
+function AlertsTab({ onStatus, onFiringCount }) {
+  const [rules,setRules] = useState([]);
+  const [alerts,setAlerts] = useState([]);
+  const [err,setErr] = useState(null);
+  const [busy,setBusy] = useState(false);
+  const [form,setForm] = useState({
+    name:"", service:"", metric:"", condition:"p95 > 500",
+    durationSeconds:"300", severity:"WARNING", webhookUrl:"",
+  });
+  const [series,setSeries] = useState([]);
+
+  const load = useCallback(async ()=>{
+    try {
+      const [r,a] = await Promise.all([
+        getJSON("/api/v1/rules"),
+        getJSON("/api/v1/alerts?range=24h&limit=100"),
+      ]);
+      setRules(r.rules||[]);
+      setAlerts(a.alerts||[]);
+      onFiringCount((r.rules||[]).filter(x=>x.firing).length);
+      setErr(null); onStatus(true);
+    } catch(e){ setErr(String(e.message||e)); onStatus(false); }
+  },[onStatus,onFiringCount]);
+
+  useEffect(()=>{ load(); },[load]);
+  useEffect(()=>{ const id=setInterval(load,10000); return ()=>clearInterval(id); },[load]);
+  useEffect(()=>{ (async()=>{
+    try { const j = await getJSON("/api/v1/series"); setSeries(j.series||[]); } catch(e){}
+  })(); },[]);
+
+  const create = async () => {
+    setBusy(true);
+    try {
+      await getJSON("/api/v1/rules", {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({...form, durationSeconds: Number(form.durationSeconds)||300}),
+      });
+      setForm({...form, name:""});
+      await load();
+      setErr(null);
+    } catch(e){ setErr(String(e.message||e)); }
+    finally { setBusy(false); }
+  };
+
+  const remove = async id => {
+    try { await getJSON("/api/v1/rules?id="+id, {method:"DELETE"}); await load(); }
+    catch(e){ setErr(String(e.message||e)); }
+  };
+
+  const evaluate = async () => {
+    setBusy(true);
+    try { await getJSON("/api/v1/evaluate", {method:"POST"}); await load(); }
+    catch(e){ setErr(String(e.message||e)); }
+    finally { setBusy(false); }
+  };
+
+  const svcOptions = [...new Set(series.map(s=>s.service))];
+  const metricOptions = series.filter(s=>!form.service || s.service===form.service).map(s=>s.metric);
+
+  return (
+    <div className="grid2">
+      <div>
+        <div className="bar">
+          <h2 className="sec" style={{margin:0}}>Kurallar ({rules.length})</h2>
+          <button className="btn" onClick={evaluate} disabled={busy}>
+            {busy ? "degerlendiriliyor..." : "Simdi degerlendir"}</button>
+        </div>
+        <div className="card" style={{marginBottom:"18px"}}>
+          {rules.length===0 && <div className="empty">Henuz kural yok. Sagdaki formu kullan.</div>}
+          {rules.length>0 && (
+            <table>
+              <thead><tr>
+                <th>Durum</th><th>Ad</th><th>Metrik</th><th>Kosul</th><th>Pencere</th><th></th>
+              </tr></thead>
+              <tbody>
+                {rules.map(r=>(
+                  <tr key={r.ruleId}>
+                    <td><span className={"badge "+(r.firing ? r.severity : "ok")}>
+                      {r.firing ? "TETIKLI" : "sakin"}</span></td>
+                    <td>{r.name}</td>
+                    <td className="mono" style={{fontSize:"11.5px"}}>
+                      {r.service}<br/><span className="dim">{r.metric}</span></td>
+                    <td className="mono" style={{fontSize:"12px"}}>{r.condition}</td>
+                    <td className="dim">{r.durationSeconds}s</td>
+                    <td><button className="btn danger" onClick={()=>remove(r.ruleId)}>sil</button></td>
+                  </tr>))}
+              </tbody>
+            </table>)}
+        </div>
+
+        <h2 className="sec">Son alarmlar ({alerts.length})</h2>
+        <div className="card">
+          {alerts.length===0 && <div className="empty">
+            Son 24 saatte alarm yok. "Simdi degerlendir"e basabilirsin.</div>}
+          {alerts.map((a,i)=>(
+            <div key={i} style={{display:"flex",gap:"10px",alignItems:"baseline",
+                                 padding:"8px 0",borderBottom:"1px solid var(--line)",fontSize:"12.5px"}}>
+              <span className="dim mono" style={{fontSize:"11px",flex:"none"}}>{clockMs(a.t)}</span>
+              <span className={"badge "+(a.resolved ? "ok" : a.severity)} style={{flex:"none"}}>
+                {a.resolved ? "cozuldu" : a.severity}</span>
+              <span>{a.message}</span>
+            </div>))}
+          {err && <div className="err">Hata: {err}</div>}
+        </div>
+      </div>
+
+      <div className="card">
+        <h2 className="sec">Yeni kural</h2>
+        <div className="form">
+          <div>
+            <label>Ad</label>
+            <input type="text" value={form.name} placeholder="Odeme gecikmesi yuksek"
+                   onChange={e=>setForm({...form,name:e.target.value})}/>
+          </div>
+          <div>
+            <label>Servis</label>
+            <select value={form.service} onChange={e=>setForm({...form,service:e.target.value})}>
+              <option value="">secin</option>
+              {svcOptions.map(s=><option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+          <div>
+            <label>Metrik</label>
+            <select value={form.metric} onChange={e=>setForm({...form,metric:e.target.value})}>
+              <option value="">secin</option>
+              {metricOptions.map(m=><option key={m} value={m}>{m}</option>)}
+            </select>
+          </div>
+          <div>
+            <label>Kosul</label>
+            <input type="text" className="mono" value={form.condition}
+                   onChange={e=>setForm({...form,condition:e.target.value})}/>
+            <p className="hint">
+              <code>&lt;toplama&gt; &lt;operator&gt; &lt;sayi&gt;</code><br/>
+              toplama: avg, sum, min, max, last, count, p50, p95, p99, <b>zscore</b><br/>
+              <b>zscore</b> istatistiksel anomali: son pencere, daha uzun gecmisin
+              ortalamasindan kac standart sapma uzakta? Sabit esik koyamadigin
+              (gunduz/gece degisen) metrikler icin.
+            </p>
+          </div>
+          <div>
+            <label>Pencere (saniye)</label>
+            <input type="number" value={form.durationSeconds}
+                   onChange={e=>setForm({...form,durationSeconds:e.target.value})}/>
+          </div>
+          <div>
+            <label>Onem</label>
+            <select value={form.severity} onChange={e=>setForm({...form,severity:e.target.value})}>
+              <option value="INFO">INFO</option>
+              <option value="WARNING">WARNING</option>
+              <option value="CRITICAL">CRITICAL</option>
+            </select>
+          </div>
+          <div>
+            <label>Webhook (istege bagli)</label>
+            <input type="text" value={form.webhookUrl} placeholder="https://..."
+                   onChange={e=>setForm({...form,webhookUrl:e.target.value})}/>
+          </div>
+          <button className="btn primary" onClick={create}
+                  disabled={busy || !form.service || !form.metric}>Kural olustur</button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -535,7 +885,7 @@ function TopologyTab({ onStatus }) {
 
   const load = useCallback(async ()=>{
     setLoading(true);
-    try { setData(await getJSON("/api/v1/topology?range="+range+"&sample=150")); setErr(null); onStatus(true); }
+    try { setData(await getJSON("/api/v1/topology?range="+range)); setErr(null); onStatus(true); }
     catch(e){ setErr(String(e.message||e)); onStatus(false); }
     finally { setLoading(false); }
   },[range,onStatus]);
@@ -546,8 +896,6 @@ function TopologyTab({ onStatus }) {
   const edges = (data && data.edges) || [];
   const services = nodes.map(n=>n.service);
 
-  // Basit katmanli yerlesim: cagrilmayan servisler solda (giris noktalari),
-  // her cagrilan servis cagiranindan bir katman sagda.
   const layout = useMemo(()=>{
     if (!nodes.length) return {pos:{}, W:800, H:300};
     const depth = {};
@@ -578,18 +926,14 @@ function TopologyTab({ onStatus }) {
           {RANGES.map(([v,l])=>(
             <button key={v} className={range===v?"on":""} onClick={()=>setRange(v)}>{l}</button>))}
         </div>
-        <button className="metric-btn" style={{width:"auto",border:"1px solid var(--line)",borderRadius:"6px",padding:"6px 12px",fontFamily:"inherit"}}
-                onClick={load}>Yenile</button>
-        {loading && <span className="meta">hesaplaniyor...</span>}
+        <button className="btn" onClick={load}>Yenile</button>
+        {loading && <span className="meta">yukleniyor...</span>}
       </div>
 
       <div className="topo">
         <div className="card">
           {nodes.length===0 ? (
-            <div className="empty">
-              {loading ? "Trace'ler orneklenip grafik cikariliyor..."
-                       : "Henuz topoloji yok. Demo calisiyor mu?"}
-            </div>
+            <div className="empty">{loading ? "Yukleniyor..." : "Henuz topoloji yok. Demo calisiyor mu?"}</div>
           ) : (
             <svg className="graph" viewBox={`0 0 ${layout.W} ${layout.H}`}
                  role="img" aria-label="Servisler arasi cagri grafigi">
@@ -601,15 +945,13 @@ function TopologyTab({ onStatus }) {
               {edges.map((e,i)=>{
                 const a = layout.pos[e.from], b = layout.pos[e.to];
                 if (!a || !b) return null;
-                const x1=a.x+62, y1=a.y, x2=b.x-62, y2=b.y;
-                const mx=(x1+x2)/2;
+                const x1=a.x+62, y1=a.y, x2=b.x-62, y2=b.y, mx=(x1+x2)/2;
                 const bad = e.errorRate > 0.02;
                 return (
                   <g key={i}>
                     <path d={`M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`}
                           fill="none" stroke={bad?"var(--danger)":"var(--ink2)"}
-                          strokeWidth={bad?2:1.4} opacity={bad?0.9:0.55}
-                          markerEnd="url(#tarr)"/>
+                          strokeWidth={bad?2:1.4} opacity={bad?0.9:0.55} markerEnd="url(#tarr)"/>
                     <text x={mx} y={(y1+y2)/2-8} textAnchor="middle" fontSize="10.5"
                           fill="var(--ink2)">{e.calls} cagri · p95 {e.p95Ms}ms</text>
                   </g>);
@@ -655,8 +997,8 @@ function TopologyTab({ onStatus }) {
               </tbody>
             </table>)}
           <p className="dim" style={{fontSize:"11.5px",marginTop:"14px",marginBottom:0}}>
-            Grafik, secili aralikta orneklenen trace'lerin ebeveyn-cocuk baglarindan
-            hesaplanir; onceden hesaplanmis bir tablodan degil.
+            Kenarlar ingest sirasinda yaziliyor: SDK cagiran servisin adini
+            tracestate ile tasiyor. Ornekleme yok, tam sayim.
           </p>
         </div>
       </div>
@@ -669,16 +1011,48 @@ function TopologyTab({ onStatus }) {
 function App() {
   const [tab,setTab] = useState("traces");
   const [ready,setReady] = useState(null);
+  const [firing,setFiring] = useState(0);
+  const [focusTrace,setFocusTrace] = useState(null);
+
   const onStatus = useCallback(v=>setReady(v),[]);
+  const onFiringCount = useCallback(n=>setFiring(n),[]);
+
+  // Loglar sekmesinden bir trace'e atlama: uc ayagi birlestiren hareket.
+  const openTrace = useCallback(id=>{ setFocusTrace(id); setTab("traces"); },[]);
+  const clearFocus = useCallback(()=>setFocusTrace(null),[]);
+
+  // Alarm rozetini her sekmede guncel tut.
+  useEffect(()=>{
+    let alive = true;
+    const poll = async () => {
+      try {
+        const j = await getJSON("/api/v1/rules");
+        if (alive) setFiring((j.rules||[]).filter(r=>r.firing).length);
+      } catch(e){}
+    };
+    poll();
+    const id = setInterval(poll, 15000);
+    return ()=>{ alive=false; clearInterval(id); };
+  },[]);
+
+  const tabs = [
+    ["metrics","Metrikler"],
+    ["traces","Trace'ler"],
+    ["logs","Loglar"],
+    ["alerts","Alarmlar"],
+    ["topology","Servis haritasi"],
+  ];
 
   return (
     <Fragment>
       <header>
         <h1>Pulse<span>Metrics</span></h1>
         <nav>
-          <button className={tab==="metrics"?"on":""} onClick={()=>setTab("metrics")}>Metrikler</button>
-          <button className={tab==="traces"?"on":""} onClick={()=>setTab("traces")}>Trace'ler</button>
-          <button className={tab==="topology"?"on":""} onClick={()=>setTab("topology")}>Servis haritasi</button>
+          {tabs.map(([k,label])=>(
+            <button key={k} className={tab===k?"on":""} onClick={()=>setTab(k)}>
+              {label}
+              {k==="alerts" && firing>0 && <span className="pip">{firing}</span>}
+            </button>))}
         </nav>
         <div className="status">
           <span className={"dot "+(ready===true?"ok":ready===false?"bad":"")}></span>
@@ -687,7 +1061,9 @@ function App() {
       </header>
       <main>
         {tab==="metrics" && <MetricsTab onStatus={onStatus}/>}
-        {tab==="traces" && <TracesTab onStatus={onStatus}/>}
+        {tab==="traces" && <TracesTab onStatus={onStatus} focusTrace={focusTrace} clearFocus={clearFocus}/>}
+        {tab==="logs" && <LogsTab onStatus={onStatus} onOpenTrace={openTrace}/>}
+        {tab==="alerts" && <AlertsTab onStatus={onStatus} onFiringCount={onFiringCount}/>}
         {tab==="topology" && <TopologyTab onStatus={onStatus}/>}
       </main>
     </Fragment>

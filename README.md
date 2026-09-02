@@ -2,7 +2,7 @@
 
 A production-grade Application Performance Monitoring (APM) platform built from scratch using Go, Kafka, ScyllaDB, and React.
 
-**Status:** Phase 2 complete - metrics + distributed tracing, service map, dashboard
+**Status:** Phase 3 complete - metrics, traces, logs, alerting, anomaly detection
 
 ---
 
@@ -60,8 +60,14 @@ pulse-metrics/
 │   │   └── agent.go
 │   ├── collector/          # Collector implementation
 │   │   ├── collector.go    #   Kafka -> ScyllaDB ingest
-│   │   └── query.go        #   gRPC MetricsService (read path)
+│   │   ├── query.go        #   gRPC MetricsService (read path)
+│   │   ├── traces.go       #   span ingest + service edges
+│   │   ├── tracequery.go   #   gRPC TraceService + topology
+│   │   ├── logs.go         #   log ingest
+│   │   ├── logquery.go     #   gRPC LogService + pattern detection
+│   │   └── alerts.go       #   alert engine + gRPC AlertService
 │   ├── health/             # Shared /healthz + /readyz server
+│   ├── logging/            # Log SDK: trace-correlated structured logging
 │   ├── tracing/            # Trace SDK: spans, W3C context, HTTP instrumentation
 │   │   ├── context.go      #   TraceID/SpanID, traceparent parse & format
 │   │   ├── tracer.go       #   Tracer, Span, samplers
@@ -246,6 +252,42 @@ req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
 resp, err := client.Do(req)
 ```
 
+### 6f. Logs, alerts and anomaly detection
+
+The demo services write trace-correlated logs. Try:
+
+```bash
+curl "localhost:8080/api/v1/log-services"
+curl "localhost:8080/api/v1/logs?service=payments&range=15m&levels=ERROR,WARN"
+
+# Every log line the request produced, across all services:
+curl "localhost:8080/api/v1/trace-logs?id=<trace_id>"
+
+# Repeated patterns, variables masked, ranked by error correlation:
+curl "localhost:8080/api/v1/log-patterns?service=payments&range=30m"
+```
+
+Create an alert rule and evaluate it immediately:
+
+```bash
+curl -X POST localhost:8080/api/v1/rules -H "Content-Type: application/json" -d '{
+  "name":"Goroutine sayisi yuksek",
+  "service":"demo-app",
+  "metric":"process.runtime.goroutines",
+  "condition":"max > 3",
+  "durationSeconds":600,
+  "severity":"WARNING"
+}'
+
+curl -X POST localhost:8080/api/v1/evaluate      # dont wait for the 30s tick
+curl "localhost:8080/api/v1/alerts?range=24h"
+```
+
+Add `"webhookUrl":"https://..."` to get an HTTP POST when the rule fires and
+again when it resolves. Re-evaluating while the state is unchanged produces
+nothing - the engine tracks which rules are currently firing so a breach is
+reported once, not every tick.
+
 ### 7. Verify Data in ScyllaDB
 
 ```bash
@@ -344,13 +386,70 @@ change because the wire format is the standard one.
 
 ---
 
-## Phase 3: Advanced Features (Weeks 11-18)
+## Phase 3: Advanced Features (Weeks 11-18) - complete
 
-- [ ] Anomaly detection (statistical baselines)
-- [ ] Alert rules engine
-- [ ] Log aggregation & search
-- [ ] Service topology auto-discovery
-- [ ] Performance optimization (sampling, compression)
+- [x] Log aggregation & search (`internal/logging`, `pulse.logs`, `pulse.trace_logs`)
+- [x] **Trace-log correlation** - logs carry `trace_id` automatically from context
+- [x] Log pattern detection (variable masking + error correlation)
+- [x] Alert rules engine with state tracking, webhooks and resolve notifications
+- [x] Anomaly detection via `zscore` conditions (statistical baselines)
+- [x] Service topology auto-discovery **at ingest time** (no more query-time sampling)
+- [x] Dashboard: Logs and Alerts tabs, per-trace log view
+
+### The three pillars, joined
+
+Phase 1 gave metrics ("payments is slow"). Phase 2 gave traces ("*this* request
+spent 312 ms in payments"). Phase 3 gives logs and, more importantly, **joins
+them**: a log written inside a span automatically carries that span's `trace_id`,
+so one id pulls the whole causal chain across every service:
+
+```
+gateway   INFO   checkout istegi alindi
+payments  ERROR  kart reddedildi: yetersiz bakiye, tutar 187.28
+orders    ERROR  odeme adimi basarisiz
+gateway   ERROR  checkout basarisiz
+```
+
+In the dashboard, clicking a `trace_id` in the Logs tab opens that trace's
+waterfall, and every trace shows its own logs underneath.
+
+### Topology: from query-time sampling to ingest-time counting
+
+Phase 2 computed the service graph by sampling recent traces and walking
+parent-child links at query time. That was honest at demo scale and slow at any
+other scale.
+
+The fix was at the source. The SDK now carries the caller's service name in the
+W3C `tracestate` header (the field the standard reserves for exactly this), so a
+SERVER span arrives already knowing who called it, in `peer.service`. The
+collector writes the edge during ingest, with **no extra read**.
+
+Result on the demo workload: `GetTopology` went from sampling ~27 calls per edge
+to counting all 180, and got faster doing it.
+
+### Alert conditions
+
+A rule condition is deliberately a tiny closed language - three parts:
+
+```
+<aggregation> <operator> <number>
+
+  aggregation : avg | sum | min | max | last | count | p50 | p95 | p99 | zscore
+  operator    : > | >= | < | <=
+
+  "p95 > 500"      classic threshold
+  "zscore > 3"     statistical anomaly
+```
+
+A full expression parser (parentheses, AND/OR, arithmetic) would be complexity
+this project does not need yet, and evaluating user-supplied text would be a
+security hole. Three parts covers the need and is trivial to validate - invalid
+conditions are rejected when the rule is created, not silently never fired.
+
+`zscore` is the anomaly detector: it compares the recent window against a
+baseline 12x longer, excluding the recent window itself, and reports how many
+standard deviations away it is. Use it for metrics where no fixed threshold
+works - a service handling 200 req/s by day and 20 by night cannot have one.
 
 ---
 
@@ -506,14 +605,20 @@ MIT (placeholder)
 
 ## Next Steps
 
-Phases 1 and 2 are done. Known work carried into Phase 3:
+Phases 1-3 are done. Carried into Phase 4 (production readiness):
 
-- **`metrics` partitions are still unbounded.** `trace_index` uses an hourly
-  `time_bucket` in its partition key; `pulse.metrics` does not. Add one before
-  running this against real traffic volume.
-- **Topology is computed at query time** from a bounded sample of traces
-  (`GetTopology`, `sample_limit`). Honest at demo scale, too slow at production
-  scale - the edges want a stream processor writing them ahead of time.
+- **`metrics` partitions are still unbounded.** `trace_index`, `logs`,
+  `service_edges` and `alerts` all use an hourly `time_bucket` in their partition
+  key. `pulse.metrics` - written first, before that lesson - still does not.
+  Fixing it is another breaking schema change, so it is grouped with the other
+  Phase 4 migrations rather than done piecemeal.
+- **Log search filters in Go, not in the database.** ScyllaDB has no full-text
+  index; queries narrow by partition and time range first, then filter in
+  memory. Correct and verifiable at this scale, wrong at large scale - that job
+  belongs to a search index.
+- **Alert engine state is in memory.** Which rules are currently firing lives in
+  one process. Run two collectors and both will notify. Needs a shared lease or
+  a `firing` column before horizontal scaling.
 - **Operation names come from `r.URL.Path`.** A path like `/orders/12345` creates
   a distinct operation per id (cardinality explosion). Use the router route
   template instead once there is a router.

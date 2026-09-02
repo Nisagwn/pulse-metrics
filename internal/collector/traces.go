@@ -230,6 +230,14 @@ func (c *Collector) storeSpans(ctx context.Context, payload *pb.TracesPayload) e
 			return fmt.Errorf("trace_index yazilamadi (%s): %w", span.SpanId, err)
 		}
 
+		// Servis topolojisi kenari: sadece SERVER span'lerinde anlamli,
+		// cunku cagiran bilgisi (peer.service) orada bulunuyor.
+		if span.Kind == pb.SpanKind_SPAN_KIND_SERVER {
+			if err := c.storeServiceEdge(ctx, span, serviceName); err != nil {
+				c.logger.Warn("servis kenari yazilamadi", zap.Error(err))
+			}
+		}
+
 		if err := c.session.Query(insertServiceOp,
 			serviceName, span.OperationName, time.Now().UnixMilli(),
 		).WithContext(ctx).Exec(); err != nil {

@@ -82,11 +82,19 @@ message AlertRule {
   string rule_id = 1;
   string service_name = 2;
   string metric_name = 3;
-  string condition = 4;  // "value > 100", "p95 > 500"
-  int32 duration_seconds = 5;
+  // condition: "<toplama> <operator> <sayi>"
+  //   toplama : avg | sum | min | max | last | p50 | p95 | p99 | zscore
+  //   operator: > | >= | < | <=
+  // Ornek: "p95 > 500", "zscore > 3"
+  // zscore istatistiksel anomali tespitidir: son deger, daha uzun bir
+  // gecmisin ortalamasindan kac standart sapma uzakta?
+  string condition = 4;
+  int32 duration_seconds = 5;   // degerlendirme penceresi
   string webhook_url = 6;
   bool enabled = 7;
   int64 created_at_ms = 8;
+  AlertSeverity severity = 9;
+  string name = 10;
 }
 
 // Alert: fired alert notification
@@ -97,6 +105,11 @@ message Alert {
   string message = 4;
   int64 timestamp_ms = 5;
   AlertSeverity severity = 6;
+  string metric_name = 7;
+  string condition = 8;
+  string rule_name = 9;
+  bool resolved = 10;         // true ise: alarm sona erdi bildirimi
+  double threshold = 11;
 }
 
 enum AlertSeverity {
@@ -140,4 +153,60 @@ service MetricsService {
   rpc ListSeries(ListSeriesRequest) returns (ListSeriesResponse);
   // Health: canlilik ve hazir olma durumu
   rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+// ---------------------------------------------------------------------------
+// Servis tanimi: alarm kurallari ve tetiklenen alarmlar
+// ---------------------------------------------------------------------------
+
+message CreateRuleResponse {
+  string rule_id = 1;
+}
+
+message ListRulesRequest {
+  string service_name = 1;  // bos ise hepsi
+}
+
+message ListRulesResponse {
+  repeated AlertRule rules = 1;
+}
+
+message DeleteRuleRequest {
+  string rule_id = 1;
+}
+
+message DeleteRuleResponse {
+  bool deleted = 1;
+}
+
+message ListAlertsRequest {
+  string service_name = 1;
+  int64 start_time_ms = 2;
+  int64 end_time_ms = 3;
+  int32 limit = 4;
+  bool firing_only = 5;
+}
+
+message ListAlertsResponse {
+  repeated Alert alerts = 1;
+  // active_rule_ids: su anda tetiklenmis durumdaki kurallar
+  repeated string active_rule_ids = 2;
+}
+
+// EvaluateRulesRequest: kurallari hemen degerlendir (test ve demo icin).
+message EvaluateRulesRequest {
+  string rule_id = 1;  // bos ise tum etkin kurallar
+}
+
+message EvaluateRulesResponse {
+  repeated Alert fired = 1;
+  int32 evaluated = 2;
+}
+
+service AlertService {
+  rpc CreateRule(AlertRule) returns (CreateRuleResponse);
+  rpc ListRules(ListRulesRequest) returns (ListRulesResponse);
+  rpc DeleteRule(DeleteRuleRequest) returns (DeleteRuleResponse);
+  rpc ListAlerts(ListAlertsRequest) returns (ListAlertsResponse);
+  rpc EvaluateRules(EvaluateRulesRequest) returns (EvaluateRulesResponse);
 }

@@ -169,7 +169,8 @@ func (e *BatchExporter) run() {
 	for {
 		select {
 		case <-e.doneCh:
-			e.flush(context.Background())
+			// Son flush'i Shutdown yapar; boylece cagiranin deadline'i
+			// gecerli olur. Burada flush etmek onu yok saymak olurdu.
 			return
 		case <-ticker.C:
 			e.flush(context.Background())
@@ -210,10 +211,10 @@ func (e *BatchExporter) flush(ctx context.Context) {
 	// bitmemis olabilir ve ilk yazma "Unknown Topic Or Partition" alir.
 	// Bu gecici bir durum, kalici bir hata degil.
 	var lastErr error
-	for attempt := 0; attempt < 3; attempt++ {
+	for attempt := 0; attempt < 6; attempt++ {
 		if attempt > 0 {
 			select {
-			case <-time.After(time.Duration(attempt) * 500 * time.Millisecond):
+			case <-time.After(exportBackoff(attempt)):
 			case <-ctx.Done():
 				e.recordFailure(len(batch), lastErr)
 				return
@@ -258,7 +259,11 @@ func (e *BatchExporter) Shutdown(ctx context.Context) error {
 	e.mu.Unlock()
 
 	close(e.doneCh)
-	e.wg.Wait() // run() son flush'i yapar
+	e.wg.Wait()
+
+	// Bekleyen span'leri cagiranin context'iyle gonder: Shutdown'a
+	// 5 saniyelik bir ctx verildiyse burada 5 saniyeden fazla beklenmez.
+	e.flush(ctx)
 
 	return e.producer.Close()
 }
@@ -297,4 +302,21 @@ func (m *MemoryExporter) Reset() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.spans = nil
+}
+
+// exportBackoff: yeniden denemeler arasi ustel bekleme, 5 saniyede sinirli.
+//
+// Ilk surum sabit 3 deneme / toplam ~1.5 saniye kullaniyordu. Yeni yaratilmis
+// bir topic'in tum broker'lara yayilmasi bundan uzun surebiliyor ve kayitlar
+// sessizce dusuyordu. Arka planda tamponlayan bir gonderici acele etmemeli:
+// veri zaten bellekte bekliyor, kaybetmektense beklemek dogru.
+func exportBackoff(attempt int) time.Duration {
+	if attempt < 1 {
+		return 0
+	}
+	d := 500 * time.Millisecond << uint(attempt-1)
+	if d > 5*time.Second {
+		d = 5 * time.Second
+	}
+	return d
 }
