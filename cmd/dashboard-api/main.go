@@ -34,6 +34,7 @@ var webFS embed.FS
 
 type server struct {
 	client pb.MetricsServiceClient
+	traces pb.TraceServiceClient
 }
 
 func newLogger() (*zap.Logger, error) {
@@ -58,11 +59,20 @@ func main() {
 	}
 	defer func() { _ = conn.Close() }()
 
-	s := &server{client: pb.NewMetricsServiceClient(conn)}
+	s := &server{
+		client: pb.NewMetricsServiceClient(conn),
+		traces: pb.NewTraceServiceClient(conn),
+	}
 
 	mux := http.NewServeMux()
+	// Metrikler (Faz 1)
 	mux.HandleFunc("/api/v1/series", s.handleSeries)
 	mux.HandleFunc("/api/v1/query", s.handleQuery)
+	// Trace'ler (Faz 2)
+	mux.HandleFunc("/api/v1/traces", s.handleTraces)
+	mux.HandleFunc("/api/v1/trace", s.handleTrace)
+	mux.HandleFunc("/api/v1/operations", s.handleOperations)
+	mux.HandleFunc("/api/v1/topology", s.handleTopology)
 	mux.HandleFunc("/", s.handleIndex)
 
 	hs := health.New("", logger)

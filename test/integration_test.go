@@ -161,7 +161,11 @@ func startCollector(t *testing.T, ctx context.Context, topic, group string) stri
 		HealthAddr:   "127.0.0.1:" + freePort(t),
 		Topic:        topic,
 		GroupID:      group,
-		Debug:        false,
+		// Bu testlerin trace ile isi yok; tuketiciyi kapatmak hem
+		// gereksiz consumer group trafigini hem de varsayilan
+		// pulse-traces topic'ine baglanmayi onler.
+		DisableTraces: true,
+		Debug:         false,
 	})
 	if err != nil {
 		t.Fatalf("collector kurulamadi: %v", err)

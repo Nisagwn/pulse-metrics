@@ -33,6 +33,7 @@ protoc -I=proto --go_out=internal/proto --go_opt=paths=source_relative \
 go build -o bin/collector      ./cmd/collector
 go build -o bin/agent          ./cmd/agent
 go build -o bin/dashboard-api  ./cmd/dashboard-api
+go build -o bin/demo           ./cmd/demo
 
 # 6. Run collector (Terminal 1)
 ./bin/collector --debug
@@ -43,8 +44,11 @@ go build -o bin/dashboard-api  ./cmd/dashboard-api
 # 8. Run dashboard API (Terminal 3)
 ./bin/dashboard-api --addr :8080 --collector localhost:50051
 
-# 9. Open the dashboard
-#    http://localhost:8080
+# 9. Run the traced demo microservices (Terminal 4)
+./bin/demo --kafka localhost:9092 --rps 4
+
+# 10. Open the dashboard
+#     http://localhost:8080
 ```
 
 The collector creates the `pulse` keyspace and `metrics` table on startup,
@@ -57,6 +61,7 @@ make dev             # Steps 2-5
 make run-collector   # Step 6
 make run-agent       # Step 7
 make run-dashboard   # Step 8
+make run-demo        # Step 9
 ```
 
 ## Verify It Works
@@ -93,7 +98,18 @@ rows instead of overwriting each other.
 | Kafka         | 9092    |                              |
 | ScyllaDB      | 9042    | CQL                          |
 | Prometheus    | 9090    |                              |
-| Grafana       | 3000    | admin / admin                |
+| Grafana       | 3000    | admin / admin (bos - asagi bak) |
+| demo gateway  | 9101    | /checkout                    |
+| demo orders   | 9102    | /orders                      |
+| demo payments | 9103    | /charge                      |
+| demo inventory| 9104    | /reserve                     |
+
+### Grafana hakkinda
+
+Kullanici adi ve parola `admin` / `admin` (docker-compose.yml icinde tanimli).
+Ama Grafana'da PulseMetrics verisi **yok**: Prometheus bu servisleri kazimiyor
+ve ScyllaDB icin bir Grafana datasource'u tanimli degil. Metrik ve trace'ler
+icin http://localhost:8080 adresindeki kendi panelini kullan.
 
 ## Tests
 

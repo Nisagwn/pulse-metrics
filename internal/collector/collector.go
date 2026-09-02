@@ -26,16 +26,24 @@ type Config struct {
 	HealthAddr   string
 	Topic        string // bos ise "pulse-metrics"
 	GroupID      string // bos ise "pulse-collector"
-	Debug        bool
+
+	// Trace tarafi (Faz 2). Ayri topic ve ayri consumer group:
+	// trace tuketimi yavaslarsa metrik tuketimi etkilenmemeli.
+	TracesTopic   string // bos ise "pulse-traces"
+	TracesGroupID string // bos ise "pulse-collector-traces"
+	DisableTraces bool   // testlerde trace tuketimini kapatmak icin
+
+	Debug bool
 }
 
 // Collector: metrics collector server
 type Collector struct {
-	config  *Config
-	logger  *zap.Logger
-	session *gocql.Session
-	reader  *kafka.Reader
-	started time.Time
+	config      *Config
+	logger      *zap.Logger
+	session     *gocql.Session
+	reader      *kafka.Reader
+	traceReader *kafka.Reader
+	started     time.Time
 
 	mu      sync.Mutex
 	stopped bool
@@ -132,6 +140,13 @@ func NewCollector(cfg *Config) (*Collector, error) {
 		return nil, fmt.Errorf("failed to connect to ScyllaDB: %w", err)
 	}
 
+	// Trace tablolari (Faz 2). Keyspace artik var, bu yuzden asil
+	// oturumdan yaratilabilirler.
+	if err := ensureTraceSchema(session, logger); err != nil {
+		session.Close()
+		return nil, err
+	}
+
 	topic := cfg.Topic
 	if topic == "" {
 		topic = DefaultTopic
@@ -149,12 +164,18 @@ func NewCollector(cfg *Config) (*Collector, error) {
 		StartOffset:    kafka.FirstOffset,
 	})
 
+	var traceReader *kafka.Reader
+	if !cfg.DisableTraces {
+		traceReader = newTraceReader(cfg)
+	}
+
 	return &Collector{
-		config:  cfg,
-		logger:  logger,
-		session: session,
-		reader:  reader,
-		started: time.Now(),
+		config:      cfg,
+		logger:      logger,
+		session:     session,
+		reader:      reader,
+		traceReader: traceReader,
+		started:     time.Now(),
 	}, nil
 }
 
@@ -186,13 +207,19 @@ func (c *Collector) Start(ctx context.Context) error {
 		zap.String("health", c.config.HealthAddr),
 	)
 
-	errCh := make(chan error, 3)
+	errCh := make(chan error, 4)
 	var wg sync.WaitGroup
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		errCh <- c.consume(ctx)
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		errCh <- c.consumeTraces(ctx)
 	}()
 
 	wg.Add(1)
@@ -230,6 +257,7 @@ func (c *Collector) serveGRPC(ctx context.Context) error {
 
 	srv := grpc.NewServer()
 	pb.RegisterMetricsServiceServer(srv, NewMetricsService(c.session, c.logger, c.started))
+	pb.RegisterTraceServiceServer(srv, NewTraceService(c.session, c.logger))
 
 	go func() {
 		<-ctx.Done()
@@ -352,6 +380,15 @@ func (c *Collector) Close() error {
 		if err := c.reader.Close(); err != nil {
 			c.logger.Error("Failed to close Kafka reader", zap.Error(err))
 			firstErr = err
+		}
+	}
+
+	if c.traceReader != nil {
+		if err := c.traceReader.Close(); err != nil {
+			c.logger.Error("Failed to close trace reader", zap.Error(err))
+			if firstErr == nil {
+				firstErr = err
+			}
 		}
 	}
 

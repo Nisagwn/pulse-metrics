@@ -129,3 +129,43 @@ message ServiceNode {
   double avg_latency_ms = 4;
   map<string, string> metadata = 5;
 }
+
+// ---------------------------------------------------------------------------
+// Servis tanimi: collector'in trace okuma API'si
+// ---------------------------------------------------------------------------
+
+// GetTraceRequest: tek bir trace'i id ile getir
+message GetTraceRequest {
+  string trace_id = 1;
+}
+
+// TopologyRequest: servis bagimlilik grafigi
+message TopologyRequest {
+  int64 start_time_ms = 1;
+  int64 end_time_ms = 2;
+  // sample_limit: topoloji, son N trace ornegi uzerinden hesaplanir.
+  // Butun trace'leri okumak pahali oldugu icin sinirli bir ornek kullanilir.
+  int32 sample_limit = 3;
+}
+
+// ListOperationsRequest: bir servisin bilinen operasyonlari
+message ListOperationsRequest {
+  string service_name = 1;
+}
+
+message ListOperationsResponse {
+  repeated string operations = 1;
+  repeated string services = 2;
+}
+
+// TraceService: dashboard-api bu servisi cagirir
+service TraceService {
+  // QueryTraces: servis/operasyon/sure/hata filtreleriyle trace arama
+  rpc QueryTraces(TraceQueryRequest) returns (TraceQueryResponse);
+  // GetTrace: tek bir trace'in tum span'leri
+  rpc GetTrace(GetTraceRequest) returns (Trace);
+  // GetTopology: servisler arasi cagri grafigi
+  rpc GetTopology(TopologyRequest) returns (ServiceTopology);
+  // ListOperations: arama formunu doldurmak icin
+  rpc ListOperations(ListOperationsRequest) returns (ListOperationsResponse);
+}

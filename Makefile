@@ -1,4 +1,4 @@
-.PHONY: help build proto docker logs clean test test-integration test-all health
+.PHONY: help build proto docker logs clean test test-integration test-all health run-demo
 
 # Colors for output
 BLUE := \033[0;36m
@@ -15,6 +15,7 @@ help:
 	@echo "  $(GREEN)make build-agent$(NC)      Build agent binary"
 	@echo "  $(GREEN)make build-collector$(NC)  Build collector binary"
 	@echo "  $(GREEN)make build-dashboard$(NC)  Build dashboard API binary"
+	@echo "  $(GREEN)make build-demo$(NC)       Build traced demo microservices"
 	@echo "  $(GREEN)make build-all$(NC)        Build all binaries"
 	@echo "  $(GREEN)make test$(NC)             Run unit tests"
 	@echo "  $(GREEN)make test-integration$(NC) Run integration tests (needs Docker)"
@@ -66,7 +67,12 @@ build-dashboard: proto
 	go build -o bin/dashboard-api ./cmd/dashboard-api
 	@echo "$(GREEN)Dashboard API built: ./bin/dashboard-api$(NC)"
 
-build-all: build-agent build-collector build-dashboard
+build-demo: proto
+	@echo "$(BLUE)Building demo microservices...$(NC)"
+	go build -o bin/demo ./cmd/demo
+	@echo "$(GREEN)Demo built: ./bin/demo$(NC)"
+
+build-all: build-agent build-collector build-dashboard build-demo
 	@echo "$(GREEN)All binaries built!$(NC)"
 
 # Testing
@@ -90,7 +96,8 @@ dev: docker-up proto build-all
 	@echo "  1. Run collector: ./bin/collector --debug"
 	@echo "  2. Run agent (in another terminal): ./bin/agent --debug"
 	@echo "  3. Run dashboard (third terminal): make run-dashboard"
-	@echo "  4. Open http://localhost:8080"
+	@echo "  4. Run demo (fourth terminal): make run-demo"
+	@echo "  5. Open http://localhost:8080"
 
 run-collector:
 	@echo "$(BLUE)Starting collector...$(NC)"
@@ -99,6 +106,10 @@ run-collector:
 run-agent:
 	@echo "$(BLUE)Starting agent...$(NC)"
 	./bin/agent --service test-app --kafka localhost:9092 --debug --interval 5s
+
+run-demo:
+	@echo "$(BLUE)Starting traced demo microservices...$(NC)"
+	./bin/demo --kafka localhost:9092 --rps 4
 
 run-dashboard:
 	@echo "$(BLUE)Starting dashboard API on http://localhost:8080 ...$(NC)"
@@ -113,7 +124,7 @@ health:
 # Cleaning
 clean:
 	@echo "$(BLUE)Cleaning build artifacts...$(NC)"
-	rm -f bin/agent bin/collector bin/dashboard-api
+	rm -f bin/agent bin/collector bin/dashboard-api bin/demo
 	rm -rf internal/proto/*.pb.go
 	@echo "$(GREEN)Cleaned!$(NC)"
 

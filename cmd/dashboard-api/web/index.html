@@ -9,69 +9,109 @@
     --bg:#F4F7F8; --surface:#FFFFFF; --surface2:#EAF0F2;
     --ink:#10191E; --ink2:#47606B; --line:#D3DFE3;
     --accent:#0B6E7F; --accent2:#B4603A; --accent3:#4B7B32;
-    --danger:#A32F2F;
+    --danger:#A32F2F; --danger-bg:#FBEAEA; --warn:#8F5400;
   }
   @media (prefers-color-scheme: dark){
     :root{
       --bg:#0C1418; --surface:#121D22; --surface2:#18262C;
       --ink:#E6EEF0; --ink2:#93A9B1; --line:#24363D;
       --accent:#4CC7DB; --accent2:#E39468; --accent3:#8FC96A;
-      --danger:#E8776F;
+      --danger:#E8776F; --danger-bg:#33191A; --warn:#E0A250;
     }
   }
   *{box-sizing:border-box}
-  body{
-    margin:0;background:var(--bg);color:var(--ink);
-    font:14px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
-  }
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:14px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
   code,.mono{font-family:ui-monospace,"JetBrains Mono",Consolas,monospace}
-  header{
-    display:flex;align-items:center;gap:16px;flex-wrap:wrap;
-    padding:14px 20px;border-bottom:1px solid var(--line);background:var(--surface);
-  }
+  button,input,select{font:inherit;color:inherit}
+
+  header{display:flex;align-items:center;gap:20px;flex-wrap:wrap;
+    padding:12px 20px;border-bottom:1px solid var(--line);background:var(--surface)}
   h1{font-size:16px;margin:0;font-weight:650;letter-spacing:-.01em}
   h1 span{color:var(--accent)}
+  nav{display:flex;gap:2px}
+  nav button{border:0;background:none;color:var(--ink2);padding:7px 14px;
+    border-radius:6px;cursor:pointer;font-size:13px;font-weight:500}
+  nav button:hover{background:var(--surface2)}
+  nav button.on{background:var(--accent);color:var(--surface);font-weight:600}
   .status{margin-left:auto;display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink2)}
   .dot{width:8px;height:8px;border-radius:50%;background:var(--ink2)}
   .dot.ok{background:var(--accent3)} .dot.bad{background:var(--danger)}
-  main{display:grid;grid-template-columns:280px 1fr;gap:0;min-height:calc(100vh - 53px)}
-  aside{border-right:1px solid var(--line);padding:16px;overflow-y:auto;background:var(--surface)}
-  .side-title{font-size:11px;font-weight:650;letter-spacing:.09em;text-transform:uppercase;color:var(--ink2);margin:0 0 10px}
-  .metric-btn{
-    display:block;width:100%;text-align:left;border:0;background:none;color:var(--ink);
-    padding:7px 9px;border-radius:5px;cursor:pointer;font-size:12.5px;
-    font-family:ui-monospace,Consolas,monospace;word-break:break-all;line-height:1.4;
-  }
-  .metric-btn:hover{background:var(--surface2)}
-  .metric-btn.on{background:var(--accent);color:var(--surface);font-weight:600}
-  .svc{font-size:11px;color:var(--ink2);margin:14px 0 6px;font-weight:650}
-  section{padding:20px;overflow:auto}
+
+  main{padding:20px;max-width:1500px;margin:0 auto}
   .bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:18px}
   .seg{display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;background:var(--surface)}
-  .seg button{
-    border:0;background:none;color:var(--ink2);padding:6px 12px;cursor:pointer;font-size:12px;
-    border-right:1px solid var(--line);
-  }
+  .seg button{border:0;background:none;color:var(--ink2);padding:6px 12px;cursor:pointer;
+    font-size:12px;border-right:1px solid var(--line)}
   .seg button:last-child{border-right:0}
   .seg button.on{background:var(--accent);color:var(--surface);font-weight:600}
+  select,input[type=text],input[type=number]{background:var(--surface);border:1px solid var(--line);
+    border-radius:6px;padding:6px 10px;font-size:12.5px}
   label.chk{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink2);cursor:pointer}
   .meta{margin-left:auto;font-size:12px;color:var(--ink2)}
   .card{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:18px}
-  .chart-title{font-size:15px;font-weight:650;margin:0 0 2px}
-  .chart-sub{font-size:12px;color:var(--ink2);margin:0 0 16px}
+  .empty{color:var(--ink2);padding:48px 0;text-align:center}
+  .err{color:var(--danger);font-size:13px;margin-top:10px}
+
+  /* metrikler */
+  .cols{display:grid;grid-template-columns:270px 1fr;gap:18px;align-items:start}
+  .side{background:var(--surface);border:1px solid var(--line);border-radius:8px;
+    padding:14px;max-height:78vh;overflow-y:auto}
+  .side-title{font-size:11px;font-weight:650;letter-spacing:.09em;text-transform:uppercase;
+    color:var(--ink2);margin:0 0 10px}
+  .metric-btn{display:block;width:100%;text-align:left;border:0;background:none;color:var(--ink);
+    padding:7px 9px;border-radius:5px;cursor:pointer;font-size:12.5px;
+    font-family:ui-monospace,Consolas,monospace;word-break:break-all;line-height:1.4}
+  .metric-btn:hover{background:var(--surface2)}
+  .metric-btn.on{background:var(--accent);color:var(--surface);font-weight:600}
+  .svc{font-size:11px;color:var(--ink2);margin:14px 0 6px;font-weight:650}
   svg.chart{display:block;width:100%;height:auto}
   .legend{display:flex;flex-wrap:wrap;gap:16px;margin-top:14px;padding-top:14px;border-top:1px solid var(--line)}
   .lg{display:flex;align-items:center;gap:7px;font-size:12px}
-  .swatch{width:10px;height:10px;border-radius:2px}
-  .lg .nums{color:var(--ink2)}
-  .empty{color:var(--ink2);padding:48px 0;text-align:center}
-  .err{color:var(--danger);font-size:13px;margin-top:10px}
-  table{border-collapse:collapse;width:100%;margin-top:18px;font-size:13px}
+  .swatch{width:10px;height:10px;border-radius:2px;flex:none}
+
+  table{border-collapse:collapse;width:100%;font-size:13px}
   th{text-align:left;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink2);
      padding:0 12px 7px 0;border-bottom:1px solid var(--line);font-weight:650}
   td{padding:8px 12px 8px 0;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
   tr:last-child td{border-bottom:0}
-  @media (max-width:760px){main{grid-template-columns:1fr}aside{border-right:0;border-bottom:1px solid var(--line)}}
+
+  /* trace listesi */
+  .trace-row{display:grid;grid-template-columns:150px 1fr 90px 70px 130px;gap:12px;align-items:center;
+    padding:10px 12px;border-bottom:1px solid var(--line);cursor:pointer;border-radius:6px}
+  .trace-row:hover{background:var(--surface2)}
+  .trace-row.on{background:var(--accent);color:var(--surface)}
+  .trace-row.on .dim{color:var(--surface);opacity:.8}
+  .dim{color:var(--ink2)}
+  .badge{display:inline-block;font-size:10.5px;font-weight:650;padding:2px 7px;border-radius:100px;
+    background:var(--surface2);color:var(--ink2)}
+  .badge.err{background:var(--danger-bg);color:var(--danger)}
+  .head-row{display:grid;grid-template-columns:150px 1fr 90px 70px 130px;gap:12px;
+    padding:0 12px 7px;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--ink2);font-weight:650;border-bottom:1px solid var(--line)}
+
+  /* waterfall */
+  .wf-row{display:grid;grid-template-columns:300px 1fr;gap:10px;align-items:center;
+    padding:3px 0;cursor:pointer;border-radius:4px}
+  .wf-row:hover{background:var(--surface2)}
+  .wf-row.on{background:var(--surface2);outline:1px solid var(--accent)}
+  .wf-label{display:flex;align-items:center;gap:6px;font-size:12px;overflow:hidden;white-space:nowrap}
+  .wf-op{text-overflow:ellipsis;overflow:hidden}
+  .wf-track{position:relative;height:20px;background:var(--surface2);border-radius:3px}
+  .wf-bar{position:absolute;top:3px;height:14px;border-radius:3px;min-width:2px}
+  .wf-dur{position:absolute;top:2px;font-size:10.5px;color:var(--ink2);
+    font-variant-numeric:tabular-nums;white-space:nowrap}
+  .wf-axis{display:grid;grid-template-columns:300px 1fr;gap:10px;
+    font-size:10.5px;color:var(--ink2);margin-bottom:6px}
+  .wf-ticks{display:flex;justify-content:space-between}
+  .kv{display:grid;grid-template-columns:180px 1fr;gap:6px 14px;font-size:12.5px;margin-top:4px}
+  .kv dt{color:var(--ink2)}
+  .kv dd{margin:0;word-break:break-all}
+
+  /* topoloji */
+  .topo{display:grid;grid-template-columns:1fr 330px;gap:18px;align-items:start}
+  svg.graph{display:block;width:100%;height:auto}
+  @media (max-width:900px){.cols,.topo{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -82,13 +122,26 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.26.4/babel.min.js"></script>
 
 <script type="text/babel">
-const { useState, useEffect, useCallback, useRef } = React;
+const { useState, useEffect, useCallback, useRef, useMemo, Fragment } = React;
 
 const RANGES = [["15m","15 dk"],["1h","1 sa"],["6h","6 sa"],["24h","24 sa"]];
-const COLORS = ["var(--accent)","var(--accent2)","var(--accent3)","#8A6FB5","#C2854A"];
+const PALETTE = ["#0B6E7F","#B4603A","#4B7B32","#8A6FB5","#C2854A","#3D7CA8","#A0526D"];
+const PALETTE_DARK = ["#4CC7DB","#E39468","#8FC96A","#B49BE0","#DDA96B","#7FB8E0","#E08CA8"];
 
-// Deger bicimleme: bayt ise MB'a cevir, buyuk sayilari kisalt.
-function fmt(v, unit) {
+const isDark = () => window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+const palette = () => (isDark() ? PALETTE_DARK : PALETTE);
+
+// Servis adindan sabit bir renk uret: ayni servis her ekranda ayni renkte olsun.
+function serviceColor(name, services) {
+  const p = palette();
+  const i = services.indexOf(name);
+  if (i >= 0) return p[i % p.length];
+  let h = 0;
+  for (let k = 0; k < name.length; k++) h = (h * 31 + name.charCodeAt(k)) >>> 0;
+  return p[h % p.length];
+}
+
+function fmtVal(v, unit) {
   if (v == null || Number.isNaN(v)) return "-";
   if (unit === "bytes") {
     if (Math.abs(v) >= 1048576) return (v / 1048576).toFixed(2) + " MB";
@@ -99,212 +152,545 @@ function fmt(v, unit) {
   if (Math.abs(v) >= 1000) return v.toFixed(0);
   return v.toFixed(2);
 }
-const clock = ms => new Date(ms).toLocaleTimeString("tr-TR", {hour:"2-digit", minute:"2-digit", second:"2-digit"});
+const fmtMs = ms => ms >= 1000 ? (ms/1000).toFixed(2)+" s" : ms.toFixed(ms < 10 ? 2 : 1)+" ms";
+const clock = ms => new Date(ms).toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
+const clockU = us => new Date(us/1000).toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
+
+async function getJSON(url) {
+  const r = await fetch(url);
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+
+/* ========================= METRIKLER ========================= */
 
 function Chart({ series, unit }) {
-  const W = 900, H = 320, P = { t: 14, r: 16, b: 30, l: 62 };
+  const W = 900, H = 300, P = { t: 14, r: 16, b: 30, l: 62 };
   const all = series.flatMap(s => s.points);
   if (!all.length) return <div className="empty">Bu aralikta veri yok.</div>;
 
   const xs = all.map(p => p.t), ys = all.map(p => p.v);
   let minY = Math.min(...ys), maxY = Math.max(...ys);
-  if (minY === maxY) { minY -= 1; maxY += 1; }          // duz cizgi ortalanmali
-  const pad = (maxY - minY) * 0.1;
-  minY -= pad; maxY += pad;
+  if (minY === maxY) { minY -= 1; maxY += 1; }
+  const pad = (maxY - minY) * 0.1; minY -= pad; maxY += pad;
   const minX = Math.min(...xs), maxX = Math.max(...xs);
 
-  const px = t => P.l + (maxX === minX ? 0.5 : (t - minX) / (maxX - minX)) * (W - P.l - P.r);
-  const py = v => P.t + (1 - (v - minY) / (maxY - minY)) * (H - P.t - P.b);
-
-  const yTicks = Array.from({length:5}, (_,i) => minY + (maxY - minY) * i / 4);
-  const xTicks = maxX === minX ? [minX] : [minX, (minX+maxX)/2, maxX];
+  const px = t => P.l + (maxX === minX ? 0.5 : (t-minX)/(maxX-minX)) * (W-P.l-P.r);
+  const py = v => P.t + (1 - (v-minY)/(maxY-minY)) * (H-P.t-P.b);
+  const yTicks = Array.from({length:5},(_,i)=>minY+(maxY-minY)*i/4);
+  const xTicks = maxX===minX ? [minX] : [minX,(minX+maxX)/2,maxX];
+  const p = palette();
 
   return (
-    <svg className="chart" viewBox={`0 0 ${W} ${H}`} role="img"
-         aria-label="Secili metrigin zaman icindeki degisimi">
-      {yTicks.map((v,i) => (
+    <svg className="chart" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Metrigin zaman icindeki degisimi">
+      {yTicks.map((v,i)=>(
         <g key={i}>
-          <line x1={P.l} y1={py(v)} x2={W-P.r} y2={py(v)}
-                stroke="var(--line)" strokeWidth="1"/>
-          <text x={P.l-8} y={py(v)+4} textAnchor="end"
-                fill="var(--ink2)" fontSize="11">{fmt(v, unit)}</text>
-        </g>
-      ))}
-      {xTicks.map((t,i) => (
+          <line x1={P.l} y1={py(v)} x2={W-P.r} y2={py(v)} stroke="var(--line)" strokeWidth="1"/>
+          <text x={P.l-8} y={py(v)+4} textAnchor="end" fill="var(--ink2)" fontSize="11">{fmtVal(v,unit)}</text>
+        </g>))}
+      {xTicks.map((t,i)=>(
         <text key={i} x={px(t)} y={H-10}
-              textAnchor={i===0?"start":i===xTicks.length-1?"end":"middle"}
-              fill="var(--ink2)" fontSize="11">{clock(t)}</text>
-      ))}
-      {series.map((s,i) => {
-        const c = COLORS[i % COLORS.length];
-        const d = s.points.map((p,j) => `${j?"L":"M"}${px(p.t).toFixed(1)},${py(p.v).toFixed(1)}`).join(" ");
+          textAnchor={i===0?"start":i===xTicks.length-1?"end":"middle"}
+          fill="var(--ink2)" fontSize="11">{clock(t)}</text>))}
+      {series.map((s,i)=>{
+        const c = p[i%p.length];
+        const d = s.points.map((q,j)=>`${j?"L":"M"}${px(q.t).toFixed(1)},${py(q.v).toFixed(1)}`).join(" ");
         const last = s.points[s.points.length-1];
-        return (
-          <g key={s.instance}>
-            <path d={d} fill="none" stroke={c} strokeWidth="2"
-                  strokeLinejoin="round" strokeLinecap="round"/>
-            <circle cx={px(last.t)} cy={py(last.v)} r="3.5" fill={c}/>
-          </g>
-        );
+        return (<g key={s.instance}>
+          <path d={d} fill="none" stroke={c} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round"/>
+          <circle cx={px(last.t)} cy={py(last.v)} r="3.5" fill={c}/>
+        </g>);
       })}
     </svg>
   );
 }
 
-function App() {
-  const [series, setSeries] = useState([]);
-  const [sel, setSel] = useState(null);
-  const [range, setRange] = useState("1h");
-  const [data, setData] = useState(null);
-  const [err, setErr] = useState(null);
-  const [live, setLive] = useState(true);
-  const [ready, setReady] = useState(null);
-  const selRef = useRef(sel);
-  selRef.current = sel;
+function MetricsTab({ onStatus }) {
+  const [series,setSeries] = useState([]);
+  const [sel,setSel] = useState(null);
+  const [range,setRange] = useState("1h");
+  const [data,setData] = useState(null);
+  const [err,setErr] = useState(null);
+  const selRef = useRef(sel); selRef.current = sel;
 
-  // Hangi seriler var?
   const loadSeries = useCallback(async () => {
     try {
-      const r = await fetch("/api/v1/series");
-      const j = await r.json();
+      const j = await getJSON("/api/v1/series");
       setSeries(j.series || []);
       if (!selRef.current && j.series && j.series.length) setSel(j.series[0]);
-      setReady(true);
-    } catch (e) { setErr(String(e)); setReady(false); }
-  }, []);
+      onStatus(true);
+    } catch(e){ setErr(String(e.message||e)); onStatus(false); }
+  }, [onStatus]);
 
   const loadData = useCallback(async () => {
-    const s = selRef.current;
-    if (!s) return;
+    const s = selRef.current; if (!s) return;
     try {
-      const q = new URLSearchParams({ service:s.service, metric:s.metric, range, limit:"5000" });
-      const r = await fetch("/api/v1/query?" + q);
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error || r.statusText);
-      setData(j); setErr(null); setReady(true);
-    } catch (e) { setErr(String(e.message || e)); setReady(false); }
-  }, [range]);
+      const q = new URLSearchParams({service:s.service,metric:s.metric,range,limit:"5000"});
+      setData(await getJSON("/api/v1/query?"+q)); setErr(null); onStatus(true);
+    } catch(e){ setErr(String(e.message||e)); onStatus(false); }
+  }, [range, onStatus]);
 
-  useEffect(() => { loadSeries(); }, [loadSeries]);
-  useEffect(() => { loadData(); }, [sel, range, loadData]);
-  useEffect(() => {
-    if (!live) return;
-    const id = setInterval(() => { loadData(); loadSeries(); }, 5000);
-    return () => clearInterval(id);
-  }, [live, loadData, loadSeries]);
+  useEffect(()=>{ loadSeries(); },[loadSeries]);
+  useEffect(()=>{ loadData(); },[sel,range,loadData]);
+  useEffect(()=>{
+    const id=setInterval(()=>{loadData();loadSeries();},5000);
+    return ()=>clearInterval(id);
+  },[loadData,loadSeries]);
 
   const byService = {};
-  series.forEach(s => { (byService[s.service] = byService[s.service] || []).push(s); });
-
+  series.forEach(s=>{(byService[s.service]=byService[s.service]||[]).push(s);});
   const chartSeries = (data && data.series) || [];
   const unit = chartSeries[0] && chartSeries[0].tags && chartSeries[0].tags.unit;
-  const total = chartSeries.reduce((n,s) => n + s.points.length, 0);
+  const p = palette();
 
   return (
-    <React.Fragment>
+    <div className="cols">
+      <div className="side">
+        <p className="side-title">Metrikler</p>
+        {series.length===0 && <div className="dim" style={{fontSize:"12.5px"}}>
+          Henuz seri yok. Agent calisiyor mu?</div>}
+        {Object.keys(byService).sort().map(svc=>(
+          <div key={svc}>
+            <div className="svc">{svc}</div>
+            {byService[svc].map(s=>(
+              <button key={s.metric}
+                className={"metric-btn"+(sel&&sel.metric===s.metric&&sel.service===s.service?" on":"")}
+                onClick={()=>setSel(s)}>{s.metric}</button>
+            ))}
+          </div>))}
+      </div>
+
+      <div>
+        <div className="bar">
+          <div className="seg">
+            {RANGES.map(([v,l])=>(
+              <button key={v} className={range===v?"on":""} onClick={()=>setRange(v)}>{l}</button>))}
+          </div>
+          {data && <span className="meta">
+            {chartSeries.reduce((n,s)=>n+s.points.length,0)} nokta · sorgu {data.queryTimeMs} ms</span>}
+        </div>
+        <div className="card">
+          <p className="mono" style={{fontSize:"15px",fontWeight:650,margin:"0 0 2px"}}>
+            {sel ? sel.metric : "Metrik secin"}</p>
+          <p className="dim" style={{fontSize:"12px",margin:"0 0 16px"}}>
+            {chartSeries.length} instance{chartSeries[0]?" · "+chartSeries[0].type:""}{unit?" · "+unit:""}</p>
+          {chartSeries.length ? <Chart series={chartSeries} unit={unit}/>
+                              : <div className="empty">Bu aralikta veri yok.</div>}
+          {chartSeries.length>0 && (
+            <div className="legend">
+              {chartSeries.map((s,i)=>{
+                const vs=s.points.map(q=>q.v);
+                return (<div className="lg" key={s.instance}>
+                  <span className="swatch" style={{background:p[i%p.length]}}></span>
+                  <span className="mono">{s.instance}</span>
+                  <span className="dim">{fmtVal(vs[vs.length-1],unit)}</span>
+                </div>);
+              })}
+            </div>)}
+          {err && <div className="err">Hata: {err}</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ========================= TRACE'LER ========================= */
+
+// Waterfall: span'leri ebeveyn-cocuk agacina dizip zaman ekseninde cizer.
+// Bir trace'e bakmanin butun anlami bu: hangi adim ne zaman basladi,
+// ne kadar surdu, hangileri paralel calisti.
+function Waterfall({ trace, services, selected, onSelect }) {
+  const spans = trace.spans || [];
+  if (!spans.length) return <div className="empty">Span yok.</div>;
+
+  const t0 = Math.min(...spans.map(s=>s.startMicros));
+  const t1 = Math.max(...spans.map(s=>s.endMicros));
+  const span = Math.max(1, t1 - t0);
+
+  // Agaci kur; kok bulunamazsa (span'ler henuz tamamlanmamis olabilir)
+  // ebeveyni elimizde olmayan span'leri de kok say.
+  const byId = {};
+  spans.forEach(s=>{ byId[s.spanId]=s; });
+  const kids = {};
+  const roots = [];
+  spans.forEach(s=>{
+    if (s.parentSpanId && byId[s.parentSpanId]) {
+      (kids[s.parentSpanId]=kids[s.parentSpanId]||[]).push(s);
+    } else { roots.push(s); }
+  });
+  const bySt = (a,b)=>a.startMicros-b.startMicros;
+  roots.sort(bySt);
+  Object.values(kids).forEach(a=>a.sort(bySt));
+
+  const rows = [];
+  const walk = (s, depth) => {
+    rows.push({span:s, depth});
+    (kids[s.spanId]||[]).forEach(c=>walk(c, depth+1));
+  };
+  roots.forEach(r=>walk(r,0));
+
+  const ticks = [0, 0.25, 0.5, 0.75, 1];
+
+  return (
+    <div>
+      <div className="wf-axis">
+        <div></div>
+        <div className="wf-ticks">
+          {ticks.map((f,i)=><span key={i}>{fmtMs(span*f/1000)}</span>)}
+        </div>
+      </div>
+      {rows.map(({span:s,depth})=>{
+        const left = ((s.startMicros-t0)/span)*100;
+        const width = Math.max(0.4, ((s.endMicros-s.startMicros)/span)*100);
+        const isErr = s.status === "STATUS_CODE_ERROR";
+        const color = isErr ? "var(--danger)" : serviceColor(s.service, services);
+        const labelRight = left > 70;
+        return (
+          <div key={s.spanId}
+               className={"wf-row"+(selected===s.spanId?" on":"")}
+               onClick={()=>onSelect(selected===s.spanId?null:s.spanId)}>
+            <div className="wf-label" style={{paddingLeft:(depth*14)+"px"}}>
+              <span className="swatch" style={{background:color}}></span>
+              <span className="dim mono" style={{fontSize:"11px"}}>{s.service}</span>
+              <span className="wf-op">{s.operation}</span>
+            </div>
+            <div className="wf-track">
+              <div className="wf-bar" style={{left:left+"%",width:width+"%",background:color}}></div>
+              <span className="wf-dur" style={
+                labelRight ? {right:(100-left)+"%",marginRight:"6px"}
+                           : {left:(left+width)+"%",marginLeft:"6px"}}>
+                {fmtMs(s.durationMs)}
+              </span>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function SpanDetail({ span }) {
+  if (!span) return null;
+  const attrs = Object.entries(span.attributes || {}).sort();
+  return (
+    <div style={{marginTop:"16px",paddingTop:"16px",borderTop:"1px solid var(--line)"}}>
+      <p style={{fontWeight:650,margin:"0 0 8px"}}>
+        <span className="mono dim" style={{fontSize:"12px"}}>{span.service}</span>{" "}{span.operation}
+      </p>
+      <dl className="kv">
+        <dt>Sure</dt><dd>{fmtMs(span.durationMs)}</dd>
+        <dt>Baslangic</dt><dd>{clockU(span.startMicros)}</dd>
+        <dt>Tur</dt><dd className="mono">{span.kind.replace("SPAN_KIND_","")}</dd>
+        <dt>Durum</dt><dd className="mono">{span.status.replace("STATUS_CODE_","")}
+          {span.statusMessage ? " — "+span.statusMessage : ""}</dd>
+        <dt>Span ID</dt><dd className="mono">{span.spanId}</dd>
+        {attrs.map(([k,v])=>(<Fragment key={k}><dt className="mono">{k}</dt><dd className="mono">{v}</dd></Fragment>))}
+      </dl>
+      {(span.events||[]).length>0 && (
+        <div style={{marginTop:"12px"}}>
+          <p className="side-title">Olaylar</p>
+          {span.events.map((e,i)=>(
+            <div key={i} style={{fontSize:"12.5px",marginBottom:"4px"}}>
+              <span className="mono">{e.name}</span>{" "}
+              <span className="dim">{clockU(e.timeMicros)}</span>
+              {Object.entries(e.attributes||{}).map(([k,v])=>(
+                <span key={k} className="dim mono" style={{marginLeft:"8px",fontSize:"11.5px"}}>{k}={v}</span>))}
+            </div>))}
+        </div>)}
+    </div>
+  );
+}
+
+function TracesTab({ onStatus }) {
+  const [services,setServices] = useState([]);
+  const [service,setService] = useState("");
+  const [operations,setOperations] = useState([]);
+  const [operation,setOperation] = useState("");
+  const [range,setRange] = useState("1h");
+  const [errorsOnly,setErrorsOnly] = useState(false);
+  const [minDur,setMinDur] = useState("");
+  const [list,setList] = useState(null);
+  const [selId,setSelId] = useState(null);
+  const [trace,setTrace] = useState(null);
+  const [selSpan,setSelSpan] = useState(null);
+  const [err,setErr] = useState(null);
+  const [live,setLive] = useState(true);
+
+  useEffect(()=>{ (async()=>{
+    try {
+      const j = await getJSON("/api/v1/operations");
+      setServices(j.services||[]);
+      if (!service && j.services && j.services.length) setService(j.services[0]);
+      onStatus(true);
+    } catch(e){ setErr(String(e.message||e)); onStatus(false); }
+  })(); },[]);
+
+  useEffect(()=>{ if(!service) return; (async()=>{
+    try {
+      const j = await getJSON("/api/v1/operations?service="+encodeURIComponent(service));
+      setOperations(j.operations||[]);
+    } catch(e){}
+  })(); },[service]);
+
+  const search = useCallback(async ()=>{
+    if(!service) return;
+    try {
+      const p = new URLSearchParams({service, range, limit:"40"});
+      if (operation) p.set("operation", operation);
+      if (errorsOnly) p.set("errorsOnly","true");
+      if (minDur) p.set("minDurationMs", minDur);
+      setList(await getJSON("/api/v1/traces?"+p)); setErr(null); onStatus(true);
+    } catch(e){ setErr(String(e.message||e)); onStatus(false); }
+  },[service,operation,range,errorsOnly,minDur,onStatus]);
+
+  useEffect(()=>{ search(); },[search]);
+  useEffect(()=>{
+    if(!live) return;
+    const id=setInterval(search,5000);
+    return ()=>clearInterval(id);
+  },[live,search]);
+
+  useEffect(()=>{ if(!selId){setTrace(null);return;} (async()=>{
+    try { setTrace(await getJSON("/api/v1/trace?id="+selId)); setSelSpan(null); }
+    catch(e){ setErr(String(e.message||e)); }
+  })(); },[selId]);
+
+  const traces = (list && list.traces) || [];
+  const selectedSpan = trace && (trace.spans||[]).find(s=>s.spanId===selSpan);
+
+  return (
+    <div>
+      <div className="bar">
+        <select value={service} onChange={e=>{setService(e.target.value);setOperation("");setSelId(null);}}>
+          {services.length===0 && <option value="">servis yok</option>}
+          {services.map(s=><option key={s} value={s}>{s}</option>)}
+        </select>
+        <select value={operation} onChange={e=>setOperation(e.target.value)}>
+          <option value="">tum operasyonlar</option>
+          {operations.map(o=><option key={o} value={o}>{o}</option>)}
+        </select>
+        <div className="seg">
+          {RANGES.map(([v,l])=>(
+            <button key={v} className={range===v?"on":""} onClick={()=>setRange(v)}>{l}</button>))}
+        </div>
+        <input type="number" placeholder="min ms" value={minDur} style={{width:"90px"}}
+               onChange={e=>setMinDur(e.target.value)}/>
+        <label className="chk">
+          <input type="checkbox" checked={errorsOnly} onChange={e=>setErrorsOnly(e.target.checked)}/>
+          sadece hatalilar
+        </label>
+        <label className="chk">
+          <input type="checkbox" checked={live} onChange={e=>setLive(e.target.checked)}/>
+          canli
+        </label>
+        {list && <span className="meta">{traces.length} trace · sorgu {list.queryTimeMs} ms</span>}
+      </div>
+
+      <div className="card" style={{marginBottom:"18px"}}>
+        <div className="head-row">
+          <span>Trace</span><span>Kok islem</span><span>Sure</span><span>Span</span><span>Zaman</span>
+        </div>
+        {traces.length===0 && <div className="empty">
+          Bu filtrelerle trace bulunamadi. Demo calisiyor mu? <code>./bin/demo.exe</code></div>}
+        {traces.map(t=>(
+          <div key={t.traceId} className={"trace-row"+(selId===t.traceId?" on":"")}
+               onClick={()=>setSelId(selId===t.traceId?null:t.traceId)}>
+            <span className="mono" style={{fontSize:"12px"}}>{t.traceId.slice(0,16)}</span>
+            <span>
+              <span className="dim mono" style={{fontSize:"11.5px"}}>{t.rootService}</span>{" "}
+              {t.rootOperation}
+              {t.hasError && <span className="badge err" style={{marginLeft:"8px"}}>hata</span>}
+            </span>
+            <span style={{fontVariantNumeric:"tabular-nums"}}>{fmtMs(t.durationMs)}</span>
+            <span className="dim">{t.spanCount}</span>
+            <span className="dim" style={{fontSize:"12px"}}>{clockU(t.startMicros)}</span>
+          </div>))}
+        {err && <div className="err">Hata: {err}</div>}
+      </div>
+
+      {trace && (
+        <div className="card">
+          <div style={{display:"flex",alignItems:"baseline",gap:"12px",flexWrap:"wrap",marginBottom:"14px"}}>
+            <span style={{fontWeight:650,fontSize:"15px"}}>{trace.rootService} · {trace.rootOperation}</span>
+            <span className="dim mono" style={{fontSize:"12px"}}>{trace.traceId}</span>
+            <span className="meta">{fmtMs(trace.durationMs)} · {trace.spanCount} span · {(trace.services||[]).length} servis</span>
+          </div>
+          <Waterfall trace={trace} services={services} selected={selSpan} onSelect={setSelSpan}/>
+          <SpanDetail span={selectedSpan}/>
+          {!selectedSpan && <p className="dim" style={{fontSize:"12px",marginTop:"14px",marginBottom:0}}>
+            Ayrintilari gormek icin bir span'e tikla.</p>}
+        </div>)}
+    </div>
+  );
+}
+
+/* ========================= SERVIS HARITASI ========================= */
+
+function TopologyTab({ onStatus }) {
+  const [range,setRange] = useState("1h");
+  const [data,setData] = useState(null);
+  const [err,setErr] = useState(null);
+  const [loading,setLoading] = useState(false);
+
+  const load = useCallback(async ()=>{
+    setLoading(true);
+    try { setData(await getJSON("/api/v1/topology?range="+range+"&sample=150")); setErr(null); onStatus(true); }
+    catch(e){ setErr(String(e.message||e)); onStatus(false); }
+    finally { setLoading(false); }
+  },[range,onStatus]);
+
+  useEffect(()=>{ load(); },[load]);
+
+  const nodes = (data && data.nodes) || [];
+  const edges = (data && data.edges) || [];
+  const services = nodes.map(n=>n.service);
+
+  // Basit katmanli yerlesim: cagrilmayan servisler solda (giris noktalari),
+  // her cagrilan servis cagiranindan bir katman sagda.
+  const layout = useMemo(()=>{
+    if (!nodes.length) return {pos:{}, W:800, H:300};
+    const depth = {};
+    nodes.forEach(n=>{ depth[n.service]=0; });
+    for (let pass=0; pass<nodes.length; pass++) {
+      let changed=false;
+      edges.forEach(e=>{
+        if (depth[e.to] < depth[e.from]+1) { depth[e.to]=depth[e.from]+1; changed=true; }
+      });
+      if (!changed) break;
+    }
+    const cols = {};
+    nodes.forEach(n=>{ (cols[depth[n.service]]=cols[depth[n.service]]||[]).push(n.service); });
+    const maxD = Math.max(...Object.keys(cols).map(Number));
+    const colW = 210, rowH = 92, padX = 90, padY = 60;
+    const pos = {};
+    Object.entries(cols).forEach(([d,list])=>{
+      list.forEach((svc,i)=>{ pos[svc] = { x: padX + Number(d)*colW, y: padY + i*rowH }; });
+    });
+    const maxRows = Math.max(...Object.values(cols).map(a=>a.length));
+    return { pos, W: padX*2 + maxD*colW, H: padY*2 + Math.max(1,(maxRows-1))*rowH };
+  },[nodes,edges]);
+
+  return (
+    <div>
+      <div className="bar">
+        <div className="seg">
+          {RANGES.map(([v,l])=>(
+            <button key={v} className={range===v?"on":""} onClick={()=>setRange(v)}>{l}</button>))}
+        </div>
+        <button className="metric-btn" style={{width:"auto",border:"1px solid var(--line)",borderRadius:"6px",padding:"6px 12px",fontFamily:"inherit"}}
+                onClick={load}>Yenile</button>
+        {loading && <span className="meta">hesaplaniyor...</span>}
+      </div>
+
+      <div className="topo">
+        <div className="card">
+          {nodes.length===0 ? (
+            <div className="empty">
+              {loading ? "Trace'ler orneklenip grafik cikariliyor..."
+                       : "Henuz topoloji yok. Demo calisiyor mu?"}
+            </div>
+          ) : (
+            <svg className="graph" viewBox={`0 0 ${layout.W} ${layout.H}`}
+                 role="img" aria-label="Servisler arasi cagri grafigi">
+              <defs>
+                <marker id="tarr" markerWidth="9" markerHeight="9" refX="8" refY="3.2" orient="auto">
+                  <polygon points="0,0 9,3.2 0,6.4" fill="var(--ink2)"/>
+                </marker>
+              </defs>
+              {edges.map((e,i)=>{
+                const a = layout.pos[e.from], b = layout.pos[e.to];
+                if (!a || !b) return null;
+                const x1=a.x+62, y1=a.y, x2=b.x-62, y2=b.y;
+                const mx=(x1+x2)/2;
+                const bad = e.errorRate > 0.02;
+                return (
+                  <g key={i}>
+                    <path d={`M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`}
+                          fill="none" stroke={bad?"var(--danger)":"var(--ink2)"}
+                          strokeWidth={bad?2:1.4} opacity={bad?0.9:0.55}
+                          markerEnd="url(#tarr)"/>
+                    <text x={mx} y={(y1+y2)/2-8} textAnchor="middle" fontSize="10.5"
+                          fill="var(--ink2)">{e.calls} cagri · p95 {e.p95Ms}ms</text>
+                  </g>);
+              })}
+              {nodes.map(n=>{
+                const p = layout.pos[n.service]; if (!p) return null;
+                const bad = n.errorRate > 0.02;
+                return (
+                  <g key={n.service}>
+                    <rect x={p.x-62} y={p.y-24} width="124" height="48" rx="7"
+                          fill="var(--surface)" stroke={bad?"var(--danger)":serviceColor(n.service,services)}
+                          strokeWidth="2"/>
+                    <text x={p.x} y={p.y-3} textAnchor="middle" fontSize="12.5" fontWeight="650"
+                          fill="var(--ink)">{n.service}</text>
+                    <text x={p.x} y={p.y+14} textAnchor="middle" fontSize="10.5" fill="var(--ink2)">
+                      {n.avgLatencyMs.toFixed(1)}ms · %{(n.errorRate*100).toFixed(1)} hata
+                    </text>
+                  </g>);
+              })}
+            </svg>)}
+          {err && <div className="err">Hata: {err}</div>}
+        </div>
+
+        <div className="card">
+          <p className="side-title">Bagimliliklar</p>
+          {edges.length===0 && <div className="dim" style={{fontSize:"12.5px"}}>Kenar bulunamadi.</div>}
+          {edges.length>0 && (
+            <table>
+              <thead><tr><th>Cagri</th><th>Adet</th><th>p95</th><th>Hata</th></tr></thead>
+              <tbody>
+                {edges.map((e,i)=>(
+                  <tr key={i}>
+                    <td style={{fontSize:"12px"}}>
+                      <span className="mono">{e.from}</span>
+                      <span className="dim"> → </span>
+                      <span className="mono">{e.to}</span>
+                    </td>
+                    <td>{e.calls}</td>
+                    <td>{e.p95Ms} ms</td>
+                    <td style={e.errorRate>0.02?{color:"var(--danger)"}:null}>
+                      %{(e.errorRate*100).toFixed(1)}</td>
+                  </tr>))}
+              </tbody>
+            </table>)}
+          <p className="dim" style={{fontSize:"11.5px",marginTop:"14px",marginBottom:0}}>
+            Grafik, secili aralikta orneklenen trace'lerin ebeveyn-cocuk baglarindan
+            hesaplanir; onceden hesaplanmis bir tablodan degil.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ========================= UYGULAMA ========================= */
+
+function App() {
+  const [tab,setTab] = useState("traces");
+  const [ready,setReady] = useState(null);
+  const onStatus = useCallback(v=>setReady(v),[]);
+
+  return (
+    <Fragment>
       <header>
         <h1>Pulse<span>Metrics</span></h1>
-        <div className="mono" style={{fontSize:"12px",color:"var(--ink2)"}}>
-          {sel ? sel.service : "—"}
-        </div>
+        <nav>
+          <button className={tab==="metrics"?"on":""} onClick={()=>setTab("metrics")}>Metrikler</button>
+          <button className={tab==="traces"?"on":""} onClick={()=>setTab("traces")}>Trace'ler</button>
+          <button className={tab==="topology"?"on":""} onClick={()=>setTab("topology")}>Servis haritasi</button>
+        </nav>
         <div className="status">
-          <span className={"dot " + (ready === true ? "ok" : ready === false ? "bad" : "")}></span>
-          {ready === true ? "bagli" : ready === false ? "baglanti yok" : "baglaniyor"}
+          <span className={"dot "+(ready===true?"ok":ready===false?"bad":"")}></span>
+          {ready===true?"bagli":ready===false?"baglanti yok":"baglaniyor"}
         </div>
       </header>
-
       <main>
-        <aside>
-          <p className="side-title">Metrikler</p>
-          {series.length === 0 && <div style={{color:"var(--ink2)",fontSize:"12.5px"}}>
-            Henuz seri yok. Agent calisiyor mu?
-          </div>}
-          {Object.keys(byService).sort().map(svc => (
-            <div key={svc}>
-              <div className="svc">{svc}</div>
-              {byService[svc].map(s => (
-                <button key={s.metric}
-                        className={"metric-btn" + (sel && sel.metric === s.metric && sel.service === s.service ? " on" : "")}
-                        onClick={() => setSel(s)}>
-                  {s.metric}
-                </button>
-              ))}
-            </div>
-          ))}
-        </aside>
-
-        <section>
-          <div className="bar">
-            <div className="seg">
-              {RANGES.map(([v,lbl]) => (
-                <button key={v} className={range===v?"on":""} onClick={() => setRange(v)}>{lbl}</button>
-              ))}
-            </div>
-            <label className="chk">
-              <input type="checkbox" checked={live} onChange={e => setLive(e.target.checked)}/>
-              5 sn'de bir yenile
-            </label>
-            {data && <span className="meta">
-              {total} nokta · sorgu {data.queryTimeMs} ms
-            </span>}
-          </div>
-
-          <div className="card">
-            <p className="chart-title mono">{sel ? sel.metric : "Metrik secin"}</p>
-            <p className="chart-sub">
-              {chartSeries.length} instance
-              {chartSeries[0] ? " · " + chartSeries[0].type : ""}
-              {unit ? " · " + unit : ""}
-            </p>
-
-            {chartSeries.length ? <Chart series={chartSeries} unit={unit}/>
-                                : <div className="empty">Bu aralikta veri yok.</div>}
-
-            {chartSeries.length > 0 && (
-              <div className="legend">
-                {chartSeries.map((s,i) => {
-                  const vs = s.points.map(p => p.v);
-                  const last = vs[vs.length-1];
-                  return (
-                    <div className="lg" key={s.instance}>
-                      <span className="swatch" style={{background:COLORS[i%COLORS.length]}}></span>
-                      <span className="mono">{s.instance}</span>
-                      <span className="nums">{fmt(last, unit)}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {chartSeries.length > 0 && (
-              <table>
-                <thead><tr>
-                  <th>Instance</th><th>Nokta</th><th>Son</th><th>Min</th><th>Maks</th><th>Ortalama</th>
-                </tr></thead>
-                <tbody>
-                {chartSeries.map(s => {
-                  const vs = s.points.map(p => p.v);
-                  const avg = vs.reduce((a,b)=>a+b,0)/vs.length;
-                  return (
-                    <tr key={s.instance}>
-                      <td className="mono">{s.instance}</td>
-                      <td>{vs.length}</td>
-                      <td>{fmt(vs[vs.length-1], unit)}</td>
-                      <td>{fmt(Math.min(...vs), unit)}</td>
-                      <td>{fmt(Math.max(...vs), unit)}</td>
-                      <td>{fmt(avg, unit)}</td>
-                    </tr>
-                  );
-                })}
-                </tbody>
-              </table>
-            )}
-
-            {err && <div className="err">Hata: {err}</div>}
-          </div>
-        </section>
+        {tab==="metrics" && <MetricsTab onStatus={onStatus}/>}
+        {tab==="traces" && <TracesTab onStatus={onStatus}/>}
+        {tab==="topology" && <TopologyTab onStatus={onStatus}/>}
       </main>
-    </React.Fragment>
+    </Fragment>
   );
 }
 

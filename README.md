@@ -2,7 +2,7 @@
 
 A production-grade Application Performance Monitoring (APM) platform built from scratch using Go, Kafka, ScyllaDB, and React.
 
-**Status:** Phase 1 complete - metrics pipeline, query API, health checks, dashboard
+**Status:** Phase 2 complete - metrics + distributed tracing, service map, dashboard
 
 ---
 
@@ -50,9 +50,11 @@ pulse-metrics/
 │   │   └── main.go
 │   ├── collector/          # Collector executable
 │   │   └── main.go
-│   └── dashboard-api/      # HTTP/JSON API + embedded React dashboard
-│       ├── main.go
-│       └── web/index.html
+│   ├── dashboard-api/      # HTTP/JSON API + embedded React dashboard
+│   │   ├── main.go
+│   │   ├── traces.go
+│   │   └── web/index.html
+│   └── demo/               # Four traced microservices + load generator
 ├── internal/
 │   ├── agent/              # Agent implementation
 │   │   └── agent.go
@@ -60,7 +62,11 @@ pulse-metrics/
 │   │   ├── collector.go    #   Kafka -> ScyllaDB ingest
 │   │   └── query.go        #   gRPC MetricsService (read path)
 │   ├── health/             # Shared /healthz + /readyz server
-│   ├── traces/             # Traces processing (TBD)
+│   ├── tracing/            # Trace SDK: spans, W3C context, HTTP instrumentation
+│   │   ├── context.go      #   TraceID/SpanID, traceparent parse & format
+│   │   ├── tracer.go       #   Tracer, Span, samplers
+│   │   ├── exporter.go     #   Batching Kafka exporter
+│   │   └── httptrace.go    #   Middleware (server) + Transport (client)
 │   └── proto/              # Generated protobuf files (auto-generated)
 ├── proto/                  # Protocol Buffer definitions
 │   ├── metrics.proto
@@ -199,6 +205,47 @@ curl "localhost:8080/api/v1/query?service=demo-app&metric=process.memory.heap.al
 Aggregations: `avg`, `sum`, `min`, `max`, `count`, `last`, `p50`, `p95`, `p99`.
 Omit `agg` for raw points.
 
+### 6e. See distributed tracing
+
+```bash
+./bin/demo --kafka localhost:9092 --rps 4
+```
+
+This starts four instrumented services in one process - `gateway` calls `orders`,
+which calls `payments` and `inventory` in parallel - plus a load generator. Some
+requests fail and some are slow on purpose.
+
+```bash
+curl "localhost:8080/api/v1/operations"
+curl "localhost:8080/api/v1/traces?service=gateway&range=15m&limit=5"
+curl "localhost:8080/api/v1/trace?id=<trace_id>"
+curl "localhost:8080/api/v1/topology?range=1h"
+```
+
+Open http://localhost:8080 and switch to the **Trace'ler** tab for the waterfall
+viewer, or **Servis haritasi** for the dependency graph.
+
+#### Instrumenting your own service
+
+```go
+exporter := tracing.NewBatchExporter(tracing.BatchExporterConfig{
+    KafkaBrokers: []string{"localhost:9092"},
+    ServiceName:  "my-service",
+})
+tracer := tracing.NewTracer("my-service", exporter,
+    tracing.WithSampler(tracing.NewRatioSampler(0.1)))
+defer tracer.Shutdown(context.Background())
+
+// Incoming requests: one SERVER span each, parent taken from traceparent.
+http.ListenAndServe(":8080", tracer.Middleware(mux))
+
+// Outgoing requests: one CLIENT span each, traceparent injected.
+// Passing ctx is required - that is where the parent span lives.
+client := tracer.Client()
+req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
+resp, err := client.Do(req)
+```
+
 ### 7. Verify Data in ScyllaDB
 
 ```bash
@@ -271,14 +318,29 @@ Agent & Collector support `--debug` flag for verbose logging:
 
 ---
 
-## Phase 2: Distributed Tracing (Weeks 5-10)
+## Phase 2: Distributed Tracing (Weeks 5-10) - complete
 
-- [ ] OpenTelemetry trace SDK integration
-- [ ] Trace context propagation (W3C standard)
-- [ ] HTTP middleware for auto-instrumentation
-- [ ] Trace table schema in ScyllaDB
-- [ ] Trace reconstruction (parent-child spans)
-- [ ] React UI: trace viewer, timeline, service dependency map
+- [x] Trace SDK (`internal/tracing`) - spans, samplers, batching exporter
+- [x] Trace context propagation (W3C `traceparent` / `tracestate`)
+- [x] HTTP middleware + client transport for auto-instrumentation
+- [x] Trace schema in ScyllaDB (`spans`, `trace_index`, `service_ops`)
+- [x] Trace reconstruction (parent-child spans, single-partition read)
+- [x] gRPC `TraceService`: QueryTraces, GetTrace, GetTopology, ListOperations
+- [x] Dashboard: trace search, waterfall viewer, service dependency map
+- [x] `cmd/demo`: four traced microservices with a load generator
+
+### A note on "OpenTelemetry SDK integration"
+
+The original plan said "integrate the OpenTelemetry SDK". This project already
+had its own complete `traces.proto` (Span, SpanKind, SpanStatus, Event, Link,
+ServiceTopology) modelled on OTLP. Pulling in the upstream Go SDK would have made
+that schema dead code and added a large dependency tree.
+
+Instead the SDK here is native, and interoperability is achieved where it actually
+matters: **W3C Trace Context**. A service instrumented with OpenTelemetry and a
+service instrumented with this SDK propagate the same `traceparent` header, so
+they join the same trace. Swapping in the upstream SDK later stays a contained
+change because the wire format is the standard one.
 
 ---
 
@@ -350,7 +412,14 @@ service MetricsService {
 }
 ```
 
-`GetTopology` arrives with Phase 2 (distributed tracing).
+```protobuf
+service TraceService {
+  rpc QueryTraces(TraceQueryRequest) returns (TraceQueryResponse);
+  rpc GetTrace(GetTraceRequest) returns (Trace);
+  rpc GetTopology(TopologyRequest) returns (ServiceTopology);
+  rpc ListOperations(ListOperationsRequest) returns (ListOperationsResponse);
+}
+```
 
 ---
 
@@ -437,17 +506,18 @@ MIT (placeholder)
 
 ## Next Steps
 
-- [x] Week 1: Architecture & setup
-- [x] Week 2: Health check endpoints
-- [x] Week 3: Agent + basic metrics
-- [x] Week 4: Collector + ScyllaDB storage + query API
-- [x] Week 5: Dashboard MVP
+Phases 1 and 2 are done. Known work carried into Phase 3:
 
-Phase 1 is done. Phase 2 starts with the trace SDK: `proto/traces.proto`
-already defines `Span`, `SpanKind` and `ServiceTopology`; the Go side is next.
-
-Known Phase 2 groundwork:
-- The dashboard is a single embedded HTML file using React via CDN (no build
-  step). Migrating it to Vite + TypeScript is worthwhile once it grows.
-- `metrics` partitions grow without bound over 30 days. Add a time bucket to
-  the partition key before running this with real traffic volume.
+- **`metrics` partitions are still unbounded.** `trace_index` uses an hourly
+  `time_bucket` in its partition key; `pulse.metrics` does not. Add one before
+  running this against real traffic volume.
+- **Topology is computed at query time** from a bounded sample of traces
+  (`GetTopology`, `sample_limit`). Honest at demo scale, too slow at production
+  scale - the edges want a stream processor writing them ahead of time.
+- **Operation names come from `r.URL.Path`.** A path like `/orders/12345` creates
+  a distinct operation per id (cardinality explosion). Use the router route
+  template instead once there is a router.
+- **The dashboard is a single embedded HTML file** using React via CDN, no build
+  step. Vite + TypeScript is worthwhile once it grows.
+- **Span events are stored as a JSON string column.** Fine while events are rare;
+  revisit if they become a primary query dimension.
