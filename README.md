@@ -2,7 +2,7 @@
 
 A production-grade Application Performance Monitoring (APM) platform built from scratch using Go, Kafka, ScyllaDB, and React.
 
-**Status:** Week 1 MVP - Architecture & Foundation
+**Status:** Phase 1 complete - metrics pipeline, query API, health checks, dashboard
 
 ---
 
@@ -50,21 +50,24 @@ pulse-metrics/
 │   │   └── main.go
 │   ├── collector/          # Collector executable
 │   │   └── main.go
-│   └── dashboard-api/      # Dashboard API server (TBD)
+│   └── dashboard-api/      # HTTP/JSON API + embedded React dashboard
+│       ├── main.go
+│       └── web/index.html
 ├── internal/
 │   ├── agent/              # Agent implementation
 │   │   └── agent.go
 │   ├── collector/          # Collector implementation
-│   │   └── collector.go
-│   ├── metrics/            # Metrics processing (TBD)
+│   │   ├── collector.go    #   Kafka -> ScyllaDB ingest
+│   │   └── query.go        #   gRPC MetricsService (read path)
+│   ├── health/             # Shared /healthz + /readyz server
 │   ├── traces/             # Traces processing (TBD)
-│   ├── storage/            # Database layer (TBD)
 │   └── proto/              # Generated protobuf files (auto-generated)
 ├── proto/                  # Protocol Buffer definitions
 │   ├── metrics.proto
 │   ├── traces.proto
 │   └── logs.proto
-├── frontend/               # React dashboard (TBD)
+├── scripts/                # init-scylla.cql (schema reference)
+├── test/                   # Integration tests (build tag: integration)
 ├── config/                 # Configuration files
 │   ├── prometheus.yml
 │   └── grafana-datasources.yml
@@ -159,6 +162,43 @@ Starting APM agent for service=test-app instance=default
 Metrics published: count=4 payload_size=123
 ```
 
+### 6b. Run Dashboard API (third terminal)
+
+```bash
+./bin/dashboard-api --addr :8080 --collector localhost:50051
+# then open http://localhost:8080
+```
+
+### 6c. Check Health
+
+Every service exposes liveness and readiness endpoints:
+
+| Service       | Health address        |
+|---------------|-----------------------|
+| agent         | `:8081`               |
+| collector     | `:8082`               |
+| dashboard-api | `:8080` (same port)   |
+
+```bash
+curl localhost:8082/readyz
+# {"status":"ready","uptime":"36s","checks":{"scylladb":"ok"},"version":"week1"}
+```
+
+`/healthz` is liveness — it stays 200 even when a dependency is down, so a brief
+ScyllaDB outage does not send every process into a restart loop. `/readyz` runs
+the dependency checks and returns 503 when one fails.
+
+### 6d. Query the API
+
+```bash
+curl "localhost:8080/api/v1/series"
+curl "localhost:8080/api/v1/query?service=demo-app&metric=process.memory.heap.alloc&range=1h"
+curl "localhost:8080/api/v1/query?service=demo-app&metric=process.memory.heap.alloc&range=1h&agg=p95"
+```
+
+Aggregations: `avg`, `sum`, `min`, `max`, `count`, `last`, `p50`, `p95`, `p99`.
+Omit `agg` for raw points.
+
 ### 7. Verify Data in ScyllaDB
 
 ```bash
@@ -194,12 +234,16 @@ docker exec -it pulse-scylladb cqlsh
 ### Testing Locally
 
 ```bash
-# Run unit tests (TBD)
-go test ./...
+# Unit tests - no infrastructure needed
+go test -race ./...
 
-# Integration test: agent → kafka → collector → scylladb
-go test -v ./internal/...
+# End-to-end: agent -> Kafka -> collector -> ScyllaDB -> gRPC query
+# Requires "docker compose up -d" first.
+go test -tags integration -v -timeout 15m ./test/...
 ```
+
+Integration tests create their own Kafka topic, consumer group and service name
+per run, so they are safe to run while a collector is already running locally.
 
 ### Debugging
 
@@ -211,7 +255,7 @@ Agent & Collector support `--debug` flag for verbose logging:
 
 ---
 
-## Phase 1 Deliverables (Weeks 1-4)
+## Phase 1 Deliverables (Weeks 1-4) — complete
 
 - [x] Architecture design & documentation
 - [x] Docker Compose development environment
@@ -219,9 +263,11 @@ Agent & Collector support `--debug` flag for verbose logging:
 - [x] Go project structure
 - [x] Agent: collects system metrics → Kafka
 - [x] Collector: Kafka consumer → ScyllaDB
-- [ ] Simple React dashboard (Week 5)
-- [ ] Health check endpoints
-- [ ] Integration tests
+- [x] gRPC query service (`MetricsService`: Query, ListSeries, Health)
+- [x] Dashboard API + simple React dashboard
+- [x] Health check endpoints (`/healthz`, `/readyz` on every service)
+- [x] Graceful shutdown on SIGINT/SIGTERM
+- [x] Unit tests + end-to-end integration tests
 
 ---
 
@@ -292,14 +338,19 @@ agent.RecordMetric("request.latency", 150.5)
 agent.RecordEvent("user.login", map[string]string{"user_id": "123"})
 ```
 
-### Collector gRPC (TBD)
+### Collector gRPC (implemented)
+
+Served by the collector on `:50051`; `dashboard-api` is its client.
 
 ```protobuf
 service MetricsService {
   rpc Query(MetricsQueryRequest) returns (MetricsQueryResponse);
-  rpc GetTopology(TopologyRequest) returns (ServiceTopology);
+  rpc ListSeries(ListSeriesRequest) returns (ListSeriesResponse);
+  rpc Health(HealthRequest) returns (HealthResponse);
 }
 ```
+
+`GetTopology` arrives with Phase 2 (distributed tracing).
 
 ---
 
@@ -386,10 +437,17 @@ MIT (placeholder)
 
 ## Next Steps
 
-- [x] Week 1: Architecture & setup ✓
-- [ ] Week 2: Docker Compose health checks
-- [ ] Week 3: Agent + basic metrics
-- [ ] Week 4: Collector + ScyllaDB storage
-- [ ] Week 5: React dashboard MVP
+- [x] Week 1: Architecture & setup
+- [x] Week 2: Health check endpoints
+- [x] Week 3: Agent + basic metrics
+- [x] Week 4: Collector + ScyllaDB storage + query API
+- [x] Week 5: Dashboard MVP
 
-Start Week 2 with adding health check endpoints to all services.
+Phase 1 is done. Phase 2 starts with the trace SDK: `proto/traces.proto`
+already defines `Span`, `SpanKind` and `ServiceTopology`; the Go side is next.
+
+Known Phase 2 groundwork:
+- The dashboard is a single embedded HTML file using React via CDN (no build
+  step). Migrating it to Vite + TypeScript is worthwhile once it grows.
+- `metrics` partitions grow without bound over 30 days. Add a time bucket to
+  the partition key before running this with real traffic volume.

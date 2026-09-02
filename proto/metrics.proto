@@ -53,6 +53,7 @@ message MetricsQueryRequest {
   int64 end_time_ms = 5;
   int32 limit = 6;
   string aggregation = 7;  // "avg", "sum", "max", "min", "p50", "p95", "p99"
+  string instance_id = 8;  // bos ise tum instance'lar
 }
 
 // MetricsQueryResponse: aggregated historical metrics
@@ -66,6 +67,8 @@ message TimeSeriesData {
   string metric_name = 1;
   map<string, string> tags = 2;
   repeated DataPoint points = 3;
+  string instance_id = 4;
+  MetricType type = 5;
 }
 
 // DataPoint: single timestamp + value
@@ -100,4 +103,41 @@ enum AlertSeverity {
   INFO = 0;
   WARNING = 1;
   CRITICAL = 2;
+}
+
+// ---------------------------------------------------------------------------
+// Servis tanimi: collector'in disariya actigi okuma API'si
+// ---------------------------------------------------------------------------
+
+// ListSeriesRequest: hangi seriler var?
+message ListSeriesRequest {
+  string service_name = 1;  // bos ise tum servisler
+}
+
+message ListSeriesResponse {
+  repeated SeriesRef series = 1;
+}
+
+// SeriesRef: bir zaman serisinin kimligi (partition key)
+message SeriesRef {
+  string service_name = 1;
+  string metric_name = 2;
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  bool ready = 1;      // bagimliliklar (ScyllaDB) erisilebilir mi?
+  string detail = 2;
+  int64 uptime_seconds = 3;
+}
+
+// MetricsService: dashboard-api bu servisi cagirir
+service MetricsService {
+  // Query: bir metrigin zaman araligindaki degerleri
+  rpc Query(MetricsQueryRequest) returns (MetricsQueryResponse);
+  // ListSeries: bilinen (servis, metrik) ciftleri
+  rpc ListSeries(ListSeriesRequest) returns (ListSeriesResponse);
+  // Health: canlilik ve hazir olma durumu
+  rpc Health(HealthRequest) returns (HealthResponse);
 }

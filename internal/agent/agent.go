@@ -3,16 +3,22 @@ package agent
 import (
 	"context"
 	"fmt"
+	"net"
 	"runtime"
 	"sync"
 	"time"
 
 	"github.com/segmentio/kafka-go"
-	pb "github.com/nisah/pulse-metrics/internal/proto"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
+
+	"github.com/nisah/pulse-metrics/internal/health"
+	pb "github.com/nisah/pulse-metrics/internal/proto"
 )
+
+// DefaultTopic: metriklerin yazildigi Kafka topic'i.
+const DefaultTopic = "pulse-metrics"
 
 // Config: agent configuration
 type Config struct {
@@ -20,6 +26,8 @@ type Config struct {
 	InstanceID      string
 	KafkaBrokers    []string
 	CollectInterval time.Duration
+	HealthAddr      string
+	Topic           string // bos ise "pulse-metrics"
 	Debug           bool
 }
 
@@ -50,10 +58,15 @@ func NewAgent(cfg *Config) (*Agent, error) {
 	}
 
 	// Initialize Kafka producer
+	topic := cfg.Topic
+	if topic == "" {
+		topic = DefaultTopic
+	}
+
 	producer := &kafka.Writer{
-		Addr:         kafka.TCP(cfg.KafkaBrokers...),
-		Topic:        "pulse-metrics",
-		Compression:  kafka.Snappy,
+		Addr:            kafka.TCP(cfg.KafkaBrokers...),
+		Topic:           topic,
+		Compression:     kafka.Snappy,
 		WriteBackoffMin: 100 * time.Millisecond,
 		WriteBackoffMax: 1 * time.Second,
 		RequiredAcks:    kafka.RequireAll, // Wait for all replicas
@@ -71,26 +84,89 @@ func NewAgent(cfg *Config) (*Agent, error) {
 }
 
 // Start: begin collecting and sending metrics
+//
+// Iki is parcasi paralel calisir: olcum dongusu ve saglik sunucusu.
+// ctx iptal edildiginde (Ctrl+C) ikisi de durur ve Close cagrilir.
 func (a *Agent) Start(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	a.logger.Info("Agent started",
 		zap.String("service", a.config.ServiceName),
 		zap.String("instance", a.config.InstanceID),
 		zap.Duration("interval", a.config.CollectInterval),
+		zap.String("health", a.config.HealthAddr),
 	)
 
+	errCh := make(chan error, 2)
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		errCh <- a.collectLoop(ctx)
+	}()
+
+	hs := health.New(a.config.HealthAddr, a.logger)
+	hs.AddCheck("kafka", a.PingKafka)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		errCh <- hs.Serve(ctx)
+	}()
+
+	err := <-errCh
+	cancel()
+	wg.Wait()
+
+	if closeErr := a.Close(); closeErr != nil && err == nil {
+		err = closeErr
+	}
+	return err
+}
+
+// collectLoop: her CollectInterval'de bir olcup gonderir.
+func (a *Agent) collectLoop(ctx context.Context) error {
 	ticker := time.NewTicker(a.config.CollectInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
-			return a.Close()
+			a.logger.Info("Collect loop stopping")
+			return nil
 		case <-ticker.C:
 			if err := a.collectAndSend(ctx); err != nil {
+				// Kapanis sirasinda ticker ile iptal yarisabilir; iptal
+				// bir hata degil, gurultu olarak loglanmamali.
+				if ctx.Err() != nil {
+					continue
+				}
+				// Tek bir gonderim hatasi agent'i oldurmemeli;
+				// Kafka gecici olarak erisilemez olabilir.
 				a.logger.Error("Failed to collect/send metrics", zap.Error(err))
 			}
 		}
 	}
+}
+
+// PingKafka: broker'lara TCP baglantisi kurulabiliyor mu? /readyz bunu kullanir.
+func (a *Agent) PingKafka(ctx context.Context) error {
+	d := net.Dialer{Timeout: 2 * time.Second}
+	var lastErr error
+	for _, broker := range a.config.KafkaBrokers {
+		conn, err := d.DialContext(ctx, "tcp", broker)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		_ = conn.Close()
+		return nil // en az bir broker'a ulasabiliyoruz
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("yapilandirilmis broker yok")
+	}
+	return lastErr
 }
 
 // collectAndSend: gather metrics and publish to Kafka
@@ -159,10 +235,12 @@ func (a *Agent) collectAndSend(ctx context.Context) error {
 	}
 
 	if err := a.producer.WriteMessages(ctx, msg); err != nil {
-		a.logger.Error("Failed to write to Kafka",
-			zap.Error(err),
-			zap.Int("metricCount", len(metrics)),
-		)
+		if ctx.Err() == nil {
+			a.logger.Error("Failed to write to Kafka",
+				zap.Error(err),
+				zap.Int("metricCount", len(metrics)),
+			)
+		}
 		return err
 	}
 
@@ -187,17 +265,24 @@ func (a *Agent) Close() error {
 
 	a.stopped = true
 
+	var firstErr error
+
+	// producer.Close() bekleyen mesajlari once flush eder; Ctrl+C'de
+	// son olcumun kaybolmamasinin sebebi bu.
 	if err := a.producer.Close(); err != nil {
 		a.logger.Error("Failed to close Kafka producer", zap.Error(err))
-		return err
-	}
-
-	if err := a.logger.Sync(); err != nil {
-		return err
+		firstErr = err
 	}
 
 	a.logger.Info("Agent stopped gracefully")
-	return nil
+
+	// Sync en sona ve hatasi yutuluyor: onceki surumde Sync, "stopped
+	// gracefully" satirindan ONCE cagriliyordu, yani o satir hicbir zaman
+	// diske ulasmiyordu. Ayrica Windows'ta stderr'e Sync ENOTTY dondurur,
+	// bu gercek bir hata degil.
+	_ = a.logger.Sync()
+
+	return firstErr
 }
 
 // MetricsCollector: custom metrics collection

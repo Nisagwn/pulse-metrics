@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PulseMetrics</title>
+<style>
+  :root{
+    --bg:#F4F7F8; --surface:#FFFFFF; --surface2:#EAF0F2;
+    --ink:#10191E; --ink2:#47606B; --line:#D3DFE3;
+    --accent:#0B6E7F; --accent2:#B4603A; --accent3:#4B7B32;
+    --danger:#A32F2F;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#0C1418; --surface:#121D22; --surface2:#18262C;
+      --ink:#E6EEF0; --ink2:#93A9B1; --line:#24363D;
+      --accent:#4CC7DB; --accent2:#E39468; --accent3:#8FC96A;
+      --danger:#E8776F;
+    }
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0;background:var(--bg);color:var(--ink);
+    font:14px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  }
+  code,.mono{font-family:ui-monospace,"JetBrains Mono",Consolas,monospace}
+  header{
+    display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+    padding:14px 20px;border-bottom:1px solid var(--line);background:var(--surface);
+  }
+  h1{font-size:16px;margin:0;font-weight:650;letter-spacing:-.01em}
+  h1 span{color:var(--accent)}
+  .status{margin-left:auto;display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink2)}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--ink2)}
+  .dot.ok{background:var(--accent3)} .dot.bad{background:var(--danger)}
+  main{display:grid;grid-template-columns:280px 1fr;gap:0;min-height:calc(100vh - 53px)}
+  aside{border-right:1px solid var(--line);padding:16px;overflow-y:auto;background:var(--surface)}
+  .side-title{font-size:11px;font-weight:650;letter-spacing:.09em;text-transform:uppercase;color:var(--ink2);margin:0 0 10px}
+  .metric-btn{
+    display:block;width:100%;text-align:left;border:0;background:none;color:var(--ink);
+    padding:7px 9px;border-radius:5px;cursor:pointer;font-size:12.5px;
+    font-family:ui-monospace,Consolas,monospace;word-break:break-all;line-height:1.4;
+  }
+  .metric-btn:hover{background:var(--surface2)}
+  .metric-btn.on{background:var(--accent);color:var(--surface);font-weight:600}
+  .svc{font-size:11px;color:var(--ink2);margin:14px 0 6px;font-weight:650}
+  section{padding:20px;overflow:auto}
+  .bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:18px}
+  .seg{display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;background:var(--surface)}
+  .seg button{
+    border:0;background:none;color:var(--ink2);padding:6px 12px;cursor:pointer;font-size:12px;
+    border-right:1px solid var(--line);
+  }
+  .seg button:last-child{border-right:0}
+  .seg button.on{background:var(--accent);color:var(--surface);font-weight:600}
+  label.chk{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink2);cursor:pointer}
+  .meta{margin-left:auto;font-size:12px;color:var(--ink2)}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:18px}
+  .chart-title{font-size:15px;font-weight:650;margin:0 0 2px}
+  .chart-sub{font-size:12px;color:var(--ink2);margin:0 0 16px}
+  svg.chart{display:block;width:100%;height:auto}
+  .legend{display:flex;flex-wrap:wrap;gap:16px;margin-top:14px;padding-top:14px;border-top:1px solid var(--line)}
+  .lg{display:flex;align-items:center;gap:7px;font-size:12px}
+  .swatch{width:10px;height:10px;border-radius:2px}
+  .lg .nums{color:var(--ink2)}
+  .empty{color:var(--ink2);padding:48px 0;text-align:center}
+  .err{color:var(--danger);font-size:13px;margin-top:10px}
+  table{border-collapse:collapse;width:100%;margin-top:18px;font-size:13px}
+  th{text-align:left;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink2);
+     padding:0 12px 7px 0;border-bottom:1px solid var(--line);font-weight:650}
+  td{padding:8px 12px 8px 0;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
+  tr:last-child td{border-bottom:0}
+  @media (max-width:760px){main{grid-template-columns:1fr}aside{border-right:0;border-bottom:1px solid var(--line)}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.26.4/babel.min.js"></script>
+
+<script type="text/babel">
+const { useState, useEffect, useCallback, useRef } = React;
+
+const RANGES = [["15m","15 dk"],["1h","1 sa"],["6h","6 sa"],["24h","24 sa"]];
+const COLORS = ["var(--accent)","var(--accent2)","var(--accent3)","#8A6FB5","#C2854A"];
+
+// Deger bicimleme: bayt ise MB'a cevir, buyuk sayilari kisalt.
+function fmt(v, unit) {
+  if (v == null || Number.isNaN(v)) return "-";
+  if (unit === "bytes") {
+    if (Math.abs(v) >= 1048576) return (v / 1048576).toFixed(2) + " MB";
+    if (Math.abs(v) >= 1024) return (v / 1024).toFixed(1) + " KB";
+    return v.toFixed(0) + " B";
+  }
+  if (Number.isInteger(v)) return String(v);
+  if (Math.abs(v) >= 1000) return v.toFixed(0);
+  return v.toFixed(2);
+}
+const clock = ms => new Date(ms).toLocaleTimeString("tr-TR", {hour:"2-digit", minute:"2-digit", second:"2-digit"});
+
+function Chart({ series, unit }) {
+  const W = 900, H = 320, P = { t: 14, r: 16, b: 30, l: 62 };
+  const all = series.flatMap(s => s.points);
+  if (!all.length) return <div className="empty">Bu aralikta veri yok.</div>;
+
+  const xs = all.map(p => p.t), ys = all.map(p => p.v);
+  let minY = Math.min(...ys), maxY = Math.max(...ys);
+  if (minY === maxY) { minY -= 1; maxY += 1; }          // duz cizgi ortalanmali
+  const pad = (maxY - minY) * 0.1;
+  minY -= pad; maxY += pad;
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+
+  const px = t => P.l + (maxX === minX ? 0.5 : (t - minX) / (maxX - minX)) * (W - P.l - P.r);
+  const py = v => P.t + (1 - (v - minY) / (maxY - minY)) * (H - P.t - P.b);
+
+  const yTicks = Array.from({length:5}, (_,i) => minY + (maxY - minY) * i / 4);
+  const xTicks = maxX === minX ? [minX] : [minX, (minX+maxX)/2, maxX];
+
+  return (
+    <svg className="chart" viewBox={`0 0 ${W} ${H}`} role="img"
+         aria-label="Secili metrigin zaman icindeki degisimi">
+      {yTicks.map((v,i) => (
+        <g key={i}>
+          <line x1={P.l} y1={py(v)} x2={W-P.r} y2={py(v)}
+                stroke="var(--line)" strokeWidth="1"/>
+          <text x={P.l-8} y={py(v)+4} textAnchor="end"
+                fill="var(--ink2)" fontSize="11">{fmt(v, unit)}</text>
+        </g>
+      ))}
+      {xTicks.map((t,i) => (
+        <text key={i} x={px(t)} y={H-10}
+              textAnchor={i===0?"start":i===xTicks.length-1?"end":"middle"}
+              fill="var(--ink2)" fontSize="11">{clock(t)}</text>
+      ))}
+      {series.map((s,i) => {
+        const c = COLORS[i % COLORS.length];
+        const d = s.points.map((p,j) => `${j?"L":"M"}${px(p.t).toFixed(1)},${py(p.v).toFixed(1)}`).join(" ");
+        const last = s.points[s.points.length-1];
+        return (
+          <g key={s.instance}>
+            <path d={d} fill="none" stroke={c} strokeWidth="2"
+                  strokeLinejoin="round" strokeLinecap="round"/>
+            <circle cx={px(last.t)} cy={py(last.v)} r="3.5" fill={c}/>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+function App() {
+  const [series, setSeries] = useState([]);
+  const [sel, setSel] = useState(null);
+  const [range, setRange] = useState("1h");
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState(null);
+  const [live, setLive] = useState(true);
+  const [ready, setReady] = useState(null);
+  const selRef = useRef(sel);
+  selRef.current = sel;
+
+  // Hangi seriler var?
+  const loadSeries = useCallback(async () => {
+    try {
+      const r = await fetch("/api/v1/series");
+      const j = await r.json();
+      setSeries(j.series || []);
+      if (!selRef.current && j.series && j.series.length) setSel(j.series[0]);
+      setReady(true);
+    } catch (e) { setErr(String(e)); setReady(false); }
+  }, []);
+
+  const loadData = useCallback(async () => {
+    const s = selRef.current;
+    if (!s) return;
+    try {
+      const q = new URLSearchParams({ service:s.service, metric:s.metric, range, limit:"5000" });
+      const r = await fetch("/api/v1/query?" + q);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || r.statusText);
+      setData(j); setErr(null); setReady(true);
+    } catch (e) { setErr(String(e.message || e)); setReady(false); }
+  }, [range]);
+
+  useEffect(() => { loadSeries(); }, [loadSeries]);
+  useEffect(() => { loadData(); }, [sel, range, loadData]);
+  useEffect(() => {
+    if (!live) return;
+    const id = setInterval(() => { loadData(); loadSeries(); }, 5000);
+    return () => clearInterval(id);
+  }, [live, loadData, loadSeries]);
+
+  const byService = {};
+  series.forEach(s => { (byService[s.service] = byService[s.service] || []).push(s); });
+
+  const chartSeries = (data && data.series) || [];
+  const unit = chartSeries[0] && chartSeries[0].tags && chartSeries[0].tags.unit;
+  const total = chartSeries.reduce((n,s) => n + s.points.length, 0);
+
+  return (
+    <React.Fragment>
+      <header>
+        <h1>Pulse<span>Metrics</span></h1>
+        <div className="mono" style={{fontSize:"12px",color:"var(--ink2)"}}>
+          {sel ? sel.service : "—"}
+        </div>
+        <div className="status">
+          <span className={"dot " + (ready === true ? "ok" : ready === false ? "bad" : "")}></span>
+          {ready === true ? "bagli" : ready === false ? "baglanti yok" : "baglaniyor"}
+        </div>
+      </header>
+
+      <main>
+        <aside>
+          <p className="side-title">Metrikler</p>
+          {series.length === 0 && <div style={{color:"var(--ink2)",fontSize:"12.5px"}}>
+            Henuz seri yok. Agent calisiyor mu?
+          </div>}
+          {Object.keys(byService).sort().map(svc => (
+            <div key={svc}>
+              <div className="svc">{svc}</div>
+              {byService[svc].map(s => (
+                <button key={s.metric}
+                        className={"metric-btn" + (sel && sel.metric === s.metric && sel.service === s.service ? " on" : "")}
+                        onClick={() => setSel(s)}>
+                  {s.metric}
+                </button>
+              ))}
+            </div>
+          ))}
+        </aside>
+
+        <section>
+          <div className="bar">
+            <div className="seg">
+              {RANGES.map(([v,lbl]) => (
+                <button key={v} className={range===v?"on":""} onClick={() => setRange(v)}>{lbl}</button>
+              ))}
+            </div>
+            <label className="chk">
+              <input type="checkbox" checked={live} onChange={e => setLive(e.target.checked)}/>
+              5 sn'de bir yenile
+            </label>
+            {data && <span className="meta">
+              {total} nokta · sorgu {data.queryTimeMs} ms
+            </span>}
+          </div>
+
+          <div className="card">
+            <p className="chart-title mono">{sel ? sel.metric : "Metrik secin"}</p>
+            <p className="chart-sub">
+              {chartSeries.length} instance
+              {chartSeries[0] ? " · " + chartSeries[0].type : ""}
+              {unit ? " · " + unit : ""}
+            </p>
+
+            {chartSeries.length ? <Chart series={chartSeries} unit={unit}/>
+                                : <div className="empty">Bu aralikta veri yok.</div>}
+
+            {chartSeries.length > 0 && (
+              <div className="legend">
+                {chartSeries.map((s,i) => {
+                  const vs = s.points.map(p => p.v);
+                  const last = vs[vs.length-1];
+                  return (
+                    <div className="lg" key={s.instance}>
+                      <span className="swatch" style={{background:COLORS[i%COLORS.length]}}></span>
+                      <span className="mono">{s.instance}</span>
+                      <span className="nums">{fmt(last, unit)}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {chartSeries.length > 0 && (
+              <table>
+                <thead><tr>
+                  <th>Instance</th><th>Nokta</th><th>Son</th><th>Min</th><th>Maks</th><th>Ortalama</th>
+                </tr></thead>
+                <tbody>
+                {chartSeries.map(s => {
+                  const vs = s.points.map(p => p.v);
+                  const avg = vs.reduce((a,b)=>a+b,0)/vs.length;
+                  return (
+                    <tr key={s.instance}>
+                      <td className="mono">{s.instance}</td>
+                      <td>{vs.length}</td>
+                      <td>{fmt(vs[vs.length-1], unit)}</td>
+                      <td>{fmt(Math.min(...vs), unit)}</td>
+                      <td>{fmt(Math.max(...vs), unit)}</td>
+                      <td>{fmt(avg, unit)}</td>
+                    </tr>
+                  );
+                })}
+                </tbody>
+              </table>
+            )}
+
+            {err && <div className="err">Hata: {err}</div>}
+          </div>
+        </section>
+      </main>
+    </React.Fragment>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>

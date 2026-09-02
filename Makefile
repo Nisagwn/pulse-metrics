@@ -1,4 +1,4 @@
-.PHONY: help build proto docker logs clean test
+.PHONY: help build proto docker logs clean test test-integration test-all health
 
 # Colors for output
 BLUE := \033[0;36m
@@ -14,8 +14,10 @@ help:
 	@echo "  $(GREEN)make proto$(NC)            Generate protobuf code"
 	@echo "  $(GREEN)make build-agent$(NC)      Build agent binary"
 	@echo "  $(GREEN)make build-collector$(NC)  Build collector binary"
+	@echo "  $(GREEN)make build-dashboard$(NC)  Build dashboard API binary"
 	@echo "  $(GREEN)make build-all$(NC)        Build all binaries"
-	@echo "  $(GREEN)make test$(NC)             Run tests"
+	@echo "  $(GREEN)make test$(NC)             Run unit tests"
+	@echo "  $(GREEN)make test-integration$(NC) Run integration tests (needs Docker)"
 	@echo "  $(GREEN)make clean$(NC)            Clean build artifacts"
 	@echo "  $(GREEN)make dev$(NC)              Run complete dev setup"
 
@@ -59,16 +61,27 @@ build-collector: proto
 	cd cmd/collector && go build -o ../../bin/collector .
 	@echo "$(GREEN)Collector built: ./bin/collector$(NC)"
 
-build-all: build-agent build-collector
+build-dashboard: proto
+	@echo "$(BLUE)Building dashboard-api...$(NC)"
+	go build -o bin/dashboard-api ./cmd/dashboard-api
+	@echo "$(GREEN)Dashboard API built: ./bin/dashboard-api$(NC)"
+
+build-all: build-agent build-collector build-dashboard
 	@echo "$(GREEN)All binaries built!$(NC)"
 
 # Testing
 test:
-	@echo "$(BLUE)Running tests...$(NC)"
-	go test -v ./...
+	@echo "$(BLUE)Running unit tests...$(NC)"
+	go test -race ./...
+
+test-integration:
+	@echo "$(BLUE)Running integration tests (Kafka + ScyllaDB gerekli)...$(NC)"
+	go test -tags integration -v -timeout 15m ./test/...
+
+test-all: test test-integration
 
 test-coverage:
-	go test -v -cover ./...
+	go test -cover ./...
 
 # Development
 dev: docker-up proto build-all
@@ -76,6 +89,8 @@ dev: docker-up proto build-all
 	@echo "Next steps:"
 	@echo "  1. Run collector: ./bin/collector --debug"
 	@echo "  2. Run agent (in another terminal): ./bin/agent --debug"
+	@echo "  3. Run dashboard (third terminal): make run-dashboard"
+	@echo "  4. Open http://localhost:8080"
 
 run-collector:
 	@echo "$(BLUE)Starting collector...$(NC)"
@@ -85,10 +100,20 @@ run-agent:
 	@echo "$(BLUE)Starting agent...$(NC)"
 	./bin/agent --service test-app --kafka localhost:9092 --debug --interval 5s
 
+run-dashboard:
+	@echo "$(BLUE)Starting dashboard API on http://localhost:8080 ...$(NC)"
+	./bin/dashboard-api --addr :8080 --collector localhost:50051
+
+health:
+	@echo "$(BLUE)Health checks:$(NC)"
+	@curl -s localhost:8081/readyz && echo ""
+	@curl -s localhost:8082/readyz && echo ""
+	@curl -s localhost:8080/readyz && echo ""
+
 # Cleaning
 clean:
 	@echo "$(BLUE)Cleaning build artifacts...$(NC)"
-	rm -f bin/agent bin/collector
+	rm -f bin/agent bin/collector bin/dashboard-api
 	rm -rf internal/proto/*.pb.go
 	@echo "$(GREEN)Cleaned!$(NC)"
 
