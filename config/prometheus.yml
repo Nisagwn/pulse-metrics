@@ -1,0 +1,41 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'pulse-local'
+    env: 'development'
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+
+# Load rules files
+rule_files:
+  # - "alerts.yml"  # TBD: Add alert rules
+
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # PulseCity (reference application)
+  - job_name: 'pulse-city'
+    scrape_interval: 10s
+    static_configs:
+      - targets: ['localhost:8080']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+
+  # Kafka broker metrics (if using JMX exporter)
+  # - job_name: 'kafka'
+  #   static_configs:
+  #     - targets: ['localhost:9999']
+
+  # ScyllaDB metrics (if Prometheus exporter enabled)
+  # - job_name: 'scylladb'
+  #   static_configs:
+  #     - targets: ['localhost:9180']

@@ -1,0 +1,21 @@
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: true
+    jsonData:
+      timeInterval: 15s
+  
+  # Optional: Add ScyllaDB datasource if using CQL visualization
+  # - name: ScyllaDB
+  #   type: cassandra
+  #   access: proxy
+  #   url: scylladb:9042
+  #   isDefault: false
+  #   editable: true
+  #   jsonData:
+  #     keyspace: "pulse"

@@ -1,0 +1,10 @@
+# Derlenmis binary'ler
+bin/
+*.exe
+
+# protoc tarafindan uretilen kod ("make proto" ile yeniden uretilir)
+internal/proto/*.pb.go
+
+# Yedekler ve gecici dosyalar
+*.bak
+*.log

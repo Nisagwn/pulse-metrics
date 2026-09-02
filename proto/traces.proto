@@ -1,0 +1,131 @@
+syntax = "proto3";
+
+package pulse.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/nisah/pulse-metrics/internal/proto";
+
+// TracesPayload: batch of spans from agent
+message TracesPayload {
+  string service_name = 1;
+  string instance_id = 2;
+  repeated Span spans = 3;
+  google.protobuf.Timestamp timestamp = 4;
+}
+
+// Span: single distributed trace span (OpenTelemetry compatible)
+message Span {
+  string trace_id = 1;
+  string span_id = 2;
+  string parent_span_id = 3;
+  string operation_name = 4;
+  string service_name = 5;
+  
+  int64 start_time_micros = 6;
+  int64 end_time_micros = 7;
+  
+  SpanKind kind = 8;
+  SpanStatus status = 9;
+  
+  map<string, string> attributes = 10;  // tags, labels
+  repeated Event events = 11;
+  repeated Link links = 12;
+  
+  // OpenTelemetry trace state (for propagation)
+  string trace_state = 13;
+}
+
+enum SpanKind {
+  SPAN_KIND_UNSPECIFIED = 0;
+  SPAN_KIND_INTERNAL = 1;
+  SPAN_KIND_SERVER = 2;
+  SPAN_KIND_CLIENT = 3;
+  SPAN_KIND_PRODUCER = 4;
+  SPAN_KIND_CONSUMER = 5;
+}
+
+message SpanStatus {
+  StatusCode code = 1;
+  string description = 2;
+}
+
+enum StatusCode {
+  STATUS_CODE_UNSET = 0;
+  STATUS_CODE_OK = 1;
+  STATUS_CODE_ERROR = 2;
+}
+
+// Event: span event (e.g., exception, log)
+message Event {
+  string name = 1;
+  int64 timestamp_micros = 2;
+  map<string, string> attributes = 3;
+}
+
+// Link: reference to another span
+message Link {
+  string trace_id = 1;
+  string span_id = 2;
+  map<string, string> attributes = 3;
+}
+
+// TraceQuery: query for historical traces
+message TraceQueryRequest {
+  string service_name = 1;
+  string operation_name = 2;
+  map<string, string> filters = 3;
+  
+  int64 start_time_ms = 4;
+  int64 end_time_ms = 5;
+  
+  int32 min_duration_ms = 6;  // filter by min latency
+  int32 max_duration_ms = 7;  // filter by max latency
+  
+  bool errors_only = 8;
+  int32 limit = 9;
+}
+
+// TraceQueryResponse: matching traces
+message TraceQueryResponse {
+  repeated Trace traces = 1;
+  int64 query_time_ms = 2;
+  int64 total_matches = 3;
+}
+
+// Trace: reconstructed complete trace (all spans)
+message Trace {
+  string trace_id = 1;
+  repeated Span spans = 2;
+  int64 start_time_micros = 3;
+  int64 duration_micros = 4;
+  int32 span_count = 5;
+  bool has_error = 6;
+}
+
+// ServiceDependency: auto-discovered service relationships
+message ServiceDependency {
+  string caller_service = 1;
+  string callee_service = 2;
+  int64 call_count = 3;
+  double error_rate = 4;
+  int64 p50_latency_ms = 5;
+  int64 p95_latency_ms = 6;
+  int64 p99_latency_ms = 7;
+}
+
+// ServiceTopology: complete dependency graph
+message ServiceTopology {
+  repeated ServiceNode nodes = 1;
+  repeated ServiceDependency edges = 2;
+  int64 timestamp_ms = 3;
+}
+
+// ServiceNode: node in dependency graph
+message ServiceNode {
+  string service_name = 1;
+  int32 instance_count = 2;
+  double error_rate = 3;
+  double avg_latency_ms = 4;
+  map<string, string> metadata = 5;
+}

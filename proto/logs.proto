@@ -1,0 +1,80 @@
+syntax = "proto3";
+
+package pulse.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/nisah/pulse-metrics/internal/proto";
+
+// LogsPayload: batch of logs from agent
+message LogsPayload {
+  string service_name = 1;
+  string instance_id = 2;
+  repeated LogRecord logs = 3;
+  google.protobuf.Timestamp timestamp = 4;
+}
+
+// LogRecord: single log entry
+message LogRecord {
+  int64 timestamp_ms = 1;
+  LogLevel level = 2;
+  string message = 3;
+  
+  // Optional trace context (link to spans)
+  string trace_id = 4;
+  string span_id = 5;
+  
+  map<string, string> attributes = 6;  // structured fields
+  
+  // Stack trace for errors
+  string stack_trace = 7;
+  
+  string service_name = 8;
+  string logger_name = 9;
+}
+
+enum LogLevel {
+  LEVEL_UNSPECIFIED = 0;
+  LEVEL_DEBUG = 1;
+  LEVEL_INFO = 2;
+  LEVEL_WARN = 3;
+  LEVEL_ERROR = 4;
+  LEVEL_FATAL = 5;
+}
+
+// LogsQuery: search historical logs
+message LogsQueryRequest {
+  string service_name = 1;
+  string query = 2;  // full-text search
+  
+  int64 start_time_ms = 3;
+  int64 end_time_ms = 4;
+  
+  repeated LogLevel levels = 5;
+  
+  int32 limit = 6;
+  string sort_order = 7;  // "asc", "desc"
+}
+
+// LogsQueryResponse: matching logs
+message LogsQueryResponse {
+  repeated LogRecord logs = 1;
+  int64 query_time_ms = 2;
+  int64 total_matches = 3;
+}
+
+// LogPattern: detected repeated log pattern
+message LogPattern {
+  string pattern = 1;
+  int64 count = 2;
+  string example_message = 3;
+  repeated string affected_services = 4;
+  double error_correlation = 5;  // correlation with errors
+}
+
+// LogAnomalies: anomaly detection result
+message LogAnomalies {
+  repeated LogPattern patterns = 1;
+  int64 detection_time_ms = 2;
+  string description = 3;
+}

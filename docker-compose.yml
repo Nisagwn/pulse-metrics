@@ -1,0 +1,103 @@
+version: '3.8'
+
+services:
+  # Kafka: Message broker for metrics/traces/logs
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: pulse-kafka
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-servers", "localhost:9092"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Zookeeper: Kafka coordination
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: pulse-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+
+  # ScyllaDB: Time-series database
+  scylladb:
+    image: scylladb/scylla:5.2.0
+    container_name: pulse-scylladb
+    ports:
+      - "9042:9042"
+    volumes:
+      - ./scripts/init-scylla.cql:/init.cql:ro
+    environment:
+      SCYLLA_SEEDS: scylladb
+      SCYLLA_CLUSTER_NAME: pulse-cluster
+    command: --skip-wait-for-gossip-to-settle 0
+    healthcheck:
+      test: ["CMD", "nodetool", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Prometheus: Metrics scraper & storage
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: pulse-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+
+  # Grafana: Visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: pulse-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SECURITY_ADMIN_USER: admin
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./config/grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+    depends_on:
+      - prometheus
+
+  # Redis: Session state & caching (optional)
+  redis:
+    image: redis:7-alpine
+    container_name: pulse-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # PgBouncer: Connection pooling for potential PostgreSQL (optional future)
+  # Useful when scaling
+
+volumes:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  default:
+    name: pulse-network

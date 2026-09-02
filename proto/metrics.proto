@@ -1,0 +1,103 @@
+syntax = "proto3";
+
+package pulse.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/nisah/pulse-metrics/internal/proto";
+
+// MetricsPayload: batch of metrics from agent
+message MetricsPayload {
+  string service_name = 1;
+  string instance_id = 2;
+  repeated Metric metrics = 3;
+  google.protobuf.Timestamp timestamp = 4;
+}
+
+// Metric: single metric data point
+message Metric {
+  string name = 1;
+  MetricType type = 2;
+  double value = 3;
+  map<string, string> tags = 4;
+  map<string, string> labels = 5;
+  int64 timestamp_millis = 6;
+}
+
+// MetricType: gauge, counter, histogram, summary
+enum MetricType {
+  GAUGE = 0;
+  COUNTER = 1;
+  HISTOGRAM = 2;
+  SUMMARY = 3;
+}
+
+// HistogramBucket: for histogram distributions
+message HistogramBucket {
+  double le = 1;  // less-than-equal boundary
+  int64 count = 2;
+}
+
+// SummaryValue: for quantile summaries
+message SummaryValue {
+  double quantile = 1;
+  double value = 2;
+}
+
+// MetricsQuery: query request for historical metrics
+message MetricsQueryRequest {
+  string service_name = 1;
+  string metric_name = 2;
+  map<string, string> filters = 3;
+  int64 start_time_ms = 4;
+  int64 end_time_ms = 5;
+  int32 limit = 6;
+  string aggregation = 7;  // "avg", "sum", "max", "min", "p50", "p95", "p99"
+}
+
+// MetricsQueryResponse: aggregated historical metrics
+message MetricsQueryResponse {
+  repeated TimeSeriesData series = 1;
+  int64 query_time_ms = 2;
+}
+
+// TimeSeriesData: time-indexed metric values
+message TimeSeriesData {
+  string metric_name = 1;
+  map<string, string> tags = 2;
+  repeated DataPoint points = 3;
+}
+
+// DataPoint: single timestamp + value
+message DataPoint {
+  int64 timestamp_ms = 1;
+  double value = 2;
+}
+
+// AlertRule: define alerting conditions
+message AlertRule {
+  string rule_id = 1;
+  string service_name = 2;
+  string metric_name = 3;
+  string condition = 4;  // "value > 100", "p95 > 500"
+  int32 duration_seconds = 5;
+  string webhook_url = 6;
+  bool enabled = 7;
+  int64 created_at_ms = 8;
+}
+
+// Alert: fired alert notification
+message Alert {
+  string rule_id = 1;
+  string service_name = 2;
+  double metric_value = 3;
+  string message = 4;
+  int64 timestamp_ms = 5;
+  AlertSeverity severity = 6;
+}
+
+enum AlertSeverity {
+  INFO = 0;
+  WARNING = 1;
+  CRITICAL = 2;
+}
