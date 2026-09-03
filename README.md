@@ -2,6 +2,8 @@
 
 A production-grade Application Performance Monitoring (APM) platform built from scratch using Go, Kafka, ScyllaDB, and React.
 
+[![CI](https://github.com/Nisagwn/pulse-metrics/actions/workflows/ci.yml/badge.svg)](https://github.com/Nisagwn/pulse-metrics/actions/workflows/ci.yml)
+
 **Status:** Phase 5 complete - speaks OTLP: any language with an OpenTelemetry SDK can send data
 
 ---
