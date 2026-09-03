@@ -12,7 +12,7 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
 
-	pb "github.com/nisah/pulse-metrics/internal/proto"
+	pb "github.com/nisah/pulse-metrics/pkg/pulsepb"
 )
 
 // Trace tarafi Kafka varsayilanlari.

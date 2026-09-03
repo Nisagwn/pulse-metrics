@@ -77,10 +77,19 @@ docker-status:
 	docker-compose ps
 
 # Protocol Buffers
+# proto: hem mesaj tiplerini hem gRPC saplamalarini uretir.
+#
+# --go-grpc_out Faz 5'te eklendi. O zamana kadar hedef yalnizca mesaj
+# tiplerini uretiyordu; _grpc.pb.go dosyalari Faz 1'de elle uretilmis ve
+# bir daha guncellenmemisti. Yani proto'daki bir servis tanimini
+# degistirip "make proto" calistirsan sapla eski kalirdi ve bunu ancak
+# derleme hatasi (ya da daha kotusu, hic hata almadan) fark ederdin.
 proto:
 	@echo "$(BLUE)Generating protobuf code...$(NC)"
-	@mkdir -p internal/proto
-	protoc -I=proto --go_out=internal/proto --go_opt=paths=source_relative \
+	@mkdir -p pkg/pulsepb
+	protoc -I=proto \
+	       --go_out=pkg/pulsepb      --go_opt=paths=source_relative \
+	       --go-grpc_out=pkg/pulsepb --go-grpc_opt=paths=source_relative \
 	       metrics.proto logs.proto traces.proto
 	@echo "$(GREEN)Protobuf code generated!$(NC)"
 
@@ -105,12 +114,17 @@ build-demo: proto
 	go build -ldflags "$(LDFLAGS)" -o bin/demo$(EXE) ./cmd/demo
 	@echo "$(GREEN)Demo built: ./bin/demo$(EXE)$(NC)"
 
+build-otlp: proto
+	@echo "$(BLUE)Building otlp-gateway...$(NC)"
+	go build -ldflags "$(LDFLAGS)" -o bin/otlp-gateway$(EXE) ./cmd/otlp-gateway
+	@echo "$(GREEN)OTLP gateway built: ./bin/otlp-gateway$(EXE)$(NC)"
+
 build-migrate: proto
 	@echo "$(BLUE)Building pulse-migrate...$(NC)"
 	go build -ldflags "$(LDFLAGS)" -o bin/pulse-migrate$(EXE) ./cmd/pulse-migrate
 	@echo "$(GREEN)Migrate built: ./bin/pulse-migrate$(EXE)$(NC)"
 
-build-all: build-agent build-collector build-dashboard build-demo build-migrate
+build-all: build-agent build-collector build-dashboard build-demo build-migrate build-otlp
 	@echo "$(GREEN)All binaries built!$(NC)"
 
 version: build-collector
@@ -227,8 +241,8 @@ docker-apps-down:
 # Cleaning
 clean:
 	@echo "$(BLUE)Cleaning build artifacts...$(NC)"
-	rm -f bin/agent$(EXE) bin/collector$(EXE) bin/dashboard-api$(EXE) bin/demo$(EXE) bin/pulse-migrate$(EXE)
-	rm -rf internal/proto/*.pb.go
+	rm -f bin/agent$(EXE) bin/collector$(EXE) bin/dashboard-api$(EXE) bin/demo$(EXE) bin/pulse-migrate$(EXE) bin/otlp-gateway$(EXE)
+	rm -rf pkg/pulsepb/*.pb.go
 	@echo "$(GREEN)Cleaned!$(NC)"
 
 clean-docker:

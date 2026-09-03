@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	pb "github.com/nisah/pulse-metrics/internal/proto"
+	pb "github.com/nisah/pulse-metrics/pkg/pulsepb"
 )
 
 // Exporter: bitmis span'leri bir yere gonderir (Kafka, stdout, test tamponu).

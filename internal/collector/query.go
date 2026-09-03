@@ -14,7 +14,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/nisah/pulse-metrics/internal/obs"
-	pb "github.com/nisah/pulse-metrics/internal/proto"
+	pb "github.com/nisah/pulse-metrics/pkg/pulsepb"
 )
 
 const (

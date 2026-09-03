@@ -1,7 +1,7 @@
 # PulseMetrics — İşletim Rehberi
 
-Faz 4 ile gelen belge. Sistemi yazmak ayrı, **ayakta tutmak** ayrı bir iş;
-bu dosya ikincisiyle ilgili.
+Faz 4 ile gelen, Faz 5'te genişletilen belge. Sistemi yazmak ayrı,
+**ayakta tutmak** ayrı bir iş; bu dosya ikincisiyle ilgili.
 
 ---
 
@@ -12,6 +12,7 @@ bu dosya ikincisiyle ilgili.
 | `agent` | 8081 (sağlık) | Süreç metriklerini toplar, Kafka'ya yazar |
 | `collector` | 50051 (gRPC), 8082 (sağlık) | Kafka → ScyllaDB, sorgu API'si, alarm motoru |
 | `dashboard-api` | 8080 | gRPC → JSON köprüsü + panel |
+| `otlp-gateway` | 4317 (gRPC), 4318 (HTTP), 8085 (sağlık) | OpenTelemetry Protocol alıcısı |
 | `demo` | — | Örnek enstrümante servisler + yük üreteci |
 | `pulse-migrate` | — | Şema göçü aracı |
 
@@ -294,6 +295,52 @@ readinessProbe:
 
 ---
 
+## 6b. OTLP ile veri almak
+
+```bash
+./bin/otlp-gateway            # gRPC :4317, HTTP :4318, sağlık :8085
+```
+
+Standart portlar kullanılıyor, yani OpenTelemetry SDK'ları hiçbir özel
+ayar gerektirmiyor:
+
+```bash
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 \
+OTEL_SERVICE_NAME=odeme-servisi \
+opentelemetry-instrument python app.py
+```
+
+**Yeniden deneme kimde?** Gateway veriyi tamponlamaz. Kafka'ya yazamazsa
+istek içinde ~8 saniye kadar yeniden dener, sonra `503` döner ve
+istemciye bırakır. Sebep: tamponlanan veri süreç çöktüğünde kaybolur;
+istemcide bekleyen veri kaybolmaz. OTel SDK'ları `503` gördüğünde üstel
+geri çekilmeyle zaten tekrar dener.
+
+**Reddedilen veri sessiz değildir.** OTLP'nin `partial_success` alanı
+kaç kaydın kabul edilmediğini istemciye bildirir:
+
+```bash
+curl -s localhost:8085/metrics | grep pulse_otlp
+# pulse_otlp_received_total{signal="traces"} 128
+# pulse_otlp_rejected_total{signal="metrics",reason="convert"} 4
+```
+
+`reason="convert"` veri modeli uyuşmazlığı (geçersiz kimlik,
+desteklenmeyen metrik türü), `reason="kafka"` altyapı sorunu — ikisi
+tamamen farklı müdahale ister.
+
+**Servis haritası OTLP verisiyle de çalışır.** Faz 3'te topolojiyi
+`peer.service` özniteliğinden çıkarıyorduk; bu OTel'in *standart*
+özniteliği, yani harici bir SDK gönderdiğinde harita kendiliğinden
+doluyor.
+
+**Histogramlar metrik adına açılır** (`http.duration_bucket_le_0.5`).
+Sebebi bölüm 8'deki tabloyla aynı: etiketler partition key'in parçası
+değil, bu yüzden `le` etiketine konulsaydı bütün kovalar aynı satıra
+yazılıp birbirini ezerdi.
+
+---
+
 ## 7. Sorun giderme
 
 **Collector açılmıyor, "ESKI semada" diyor**
@@ -323,6 +370,17 @@ collector'ı yeniden başlat (açılışta yaratır).
 SELECT * FROM pulse.alert_state WHERE rule_id = '...';
 ```
 Gerekirse satırı sil; bir sonraki turda yeniden tetiklenir.
+
+**OTLP gönderiyorum ama veri gelmiyor**
+→ Sırayla: (1) `curl -s localhost:8085/metrics | grep pulse_otlp` —
+`received` artıyor mu? Artmıyorsa istek gateway'e hiç ulaşmıyor.
+(2) `rejected{reason="convert"}` artıyorsa veri modeli uyuşmuyor;
+en sık sebep geçersiz `trace_id` uzunluğu. (3) `reason="kafka"`
+artıyorsa gateway Kafka'ya yazamıyor — `/readyz` bak.
+
+**OTLP/JSON gönderirken span'ler reddediliyor**
+→ Kimlikler ya onaltılık (32/16 karakter) ya da base64 olmalı. Gateway
+ikisini de kabul eder ama karışık/eksik uzunluktakileri reddeder.
 
 **Grafana boş**
 → `http://localhost:9090/targets` — hedefler `UP` mı? Süreçler makinede

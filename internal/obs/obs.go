@@ -80,6 +80,25 @@ var (
 		Help: "Kafka'da okunmayi bekleyen mesaj sayisi",
 	}, []string{"signal"})
 
+	// OTLPReceived: OTLP uzerinden kabul edilen kayit sayisi (Faz 5).
+	//
+	// Bu sayacin sifirdan buyuk olmasi, PulseMetrics'in artik kendi
+	// SDK'si disindan da veri aldigi anlamina gelir.
+	OTLPReceived = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "pulse_otlp_received_total",
+		Help: "OTLP uzerinden kabul edilen kayit sayisi",
+	}, []string{"signal"})
+
+	// OTLPRejected: cevrilemeyen ya da yazilamayan kayitlar.
+	//
+	// reason="convert" veri modeli uyusmazligi (gecersiz kimlik,
+	// desteklenmeyen metrik turu), reason="kafka" ise altyapi sorunu.
+	// Ikisi tamamen farkli mudahale ister, bu yuzden ayri etiketler.
+	OTLPRejected = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "pulse_otlp_rejected_total",
+		Help: "OTLP kayitlarindan reddedilenler (reason: convert, kafka)",
+	}, []string{"signal", "reason"})
+
 	// AlertEvaluations: degerlendirilen kural sayisi.
 	AlertEvaluations = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "pulse_alert_evaluations_total",

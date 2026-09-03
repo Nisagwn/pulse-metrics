@@ -147,6 +147,31 @@ curl -s localhost:8084/metrics | grep pulse_alert_transitions
 
 Ayrintili isletim bilgisi: `docs/OPERATIONS.md`
 
+## Faz 5: baska bir dilden veri gondermek
+
+```bash
+./bin/otlp-gateway.exe          # gRPC :4317, HTTP :4318
+
+# Hicbir SDK olmadan, duz curl ile:
+./examples/otlp-curl.sh
+
+# Ya da gercek bir uygulamadan - PulseMetrics'e ozel tek satir kod yok:
+#   OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 \
+#   OTEL_SERVICE_NAME=odeme-servisi \
+#   opentelemetry-instrument python app.py
+
+curl -s localhost:8085/metrics | grep pulse_otlp   # kabul/red sayaclari
+```
+
+Go projelerinden SDK dogrudan kullanilabilir (artik `internal/` altinda degil):
+
+```go
+import (
+    "github.com/nisah/pulse-metrics/pkg/tracing"
+    "github.com/nisah/pulse-metrics/pkg/logging"
+)
+```
+
 ## Tests
 
 ```bash

@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	pb "github.com/nisah/pulse-metrics/internal/proto"
-	"github.com/nisah/pulse-metrics/internal/tracing"
+	pb "github.com/nisah/pulse-metrics/pkg/pulsepb"
+	"github.com/nisah/pulse-metrics/pkg/tracing"
 )
 
 // collect: Echo geri cagrisiyla kayitlari toplayan yardimci.

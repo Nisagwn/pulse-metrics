@@ -15,8 +15,8 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/nisah/pulse-metrics/internal/collector"
-	pb "github.com/nisah/pulse-metrics/internal/proto"
-	"github.com/nisah/pulse-metrics/internal/tracing"
+	pb "github.com/nisah/pulse-metrics/pkg/pulsepb"
+	"github.com/nisah/pulse-metrics/pkg/tracing"
 )
 
 // startTraceCollector: trace tuketimi acik bir collector baslatir.

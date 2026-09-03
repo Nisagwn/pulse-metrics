@@ -10,7 +10,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	pb "github.com/nisah/pulse-metrics/internal/proto"
+	pb "github.com/nisah/pulse-metrics/pkg/pulsepb"
 )
 
 // TracesTopic: span'lerin yazildigi Kafka topic'i.

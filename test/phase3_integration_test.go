@@ -18,9 +18,9 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/nisah/pulse-metrics/internal/collector"
-	"github.com/nisah/pulse-metrics/internal/logging"
-	pb "github.com/nisah/pulse-metrics/internal/proto"
-	"github.com/nisah/pulse-metrics/internal/tracing"
+	"github.com/nisah/pulse-metrics/pkg/logging"
+	pb "github.com/nisah/pulse-metrics/pkg/pulsepb"
+	"github.com/nisah/pulse-metrics/pkg/tracing"
 )
 
 // startFullCollector: metrik + trace + log tuketimi ve alarm motoru acik.

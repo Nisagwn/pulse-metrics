@@ -14,7 +14,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/nisah/pulse-metrics/internal/health"
-	pb "github.com/nisah/pulse-metrics/internal/proto"
+	pb "github.com/nisah/pulse-metrics/pkg/pulsepb"
 )
 
 // DefaultTopic: metriklerin yazildigi Kafka topic'i.

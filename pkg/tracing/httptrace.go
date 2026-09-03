@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	pb "github.com/nisah/pulse-metrics/internal/proto"
+	pb "github.com/nisah/pulse-metrics/pkg/pulsepb"
 )
 
 // W3C Trace Context baslik adlari.

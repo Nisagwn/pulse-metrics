@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	pb "github.com/nisah/pulse-metrics/internal/proto"
+	pb "github.com/nisah/pulse-metrics/pkg/pulsepb"
 )
 
 func points(vals ...float64) []*pb.DataPoint {

@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	pb "github.com/nisah/pulse-metrics/internal/proto"
+	pb "github.com/nisah/pulse-metrics/pkg/pulsepb"
 )
 
 // --- W3C trace context ------------------------------------------------------

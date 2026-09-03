@@ -31,9 +31,9 @@ import (
 	"time"
 
 	"github.com/nisah/pulse-metrics/internal/config"
-	"github.com/nisah/pulse-metrics/internal/logging"
-	pb "github.com/nisah/pulse-metrics/internal/proto"
-	"github.com/nisah/pulse-metrics/internal/tracing"
+	"github.com/nisah/pulse-metrics/pkg/logging"
+	pb "github.com/nisah/pulse-metrics/pkg/pulsepb"
+	"github.com/nisah/pulse-metrics/pkg/tracing"
 )
 
 type service struct {

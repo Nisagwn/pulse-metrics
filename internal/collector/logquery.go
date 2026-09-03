@@ -13,8 +13,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/nisah/pulse-metrics/internal/logging"
-	pb "github.com/nisah/pulse-metrics/internal/proto"
+	"github.com/nisah/pulse-metrics/pkg/logging"
+	pb "github.com/nisah/pulse-metrics/pkg/pulsepb"
 )
 
 const (

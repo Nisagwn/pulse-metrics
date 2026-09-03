@@ -2,8 +2,19 @@
 bin/
 *.exe
 
-# protoc tarafindan uretilen kod ("make proto" ile yeniden uretilir)
-internal/proto/*.pb.go
+# NOT: pkg/pulsepb/*.pb.go BILEREK yok sayilmiyor, depoya giriyor.
+#
+# Faz 5'e kadar uretilen kod gitignore'daydi ve mantikli gorunuyordu:
+# "make proto" ile yeniden uretilebiliyor, neden depoda dursun?
+#
+# Cunku pkg/ altindaki paketler artik disaridan import edilebiliyor.
+# Go modul cekerken git deposunda NE VARSA onu alir; uretilen kod orada
+# yoksa "go get github.com/nisah/pulse-metrics/pkg/tracing" yapan biri
+# derlenmeyen bir modul indirir. Kullanicidan protoc kurmasini beklemek
+# de secenek degil.
+#
+# Kural: modulunun disa acik yuzeyi uretilen koda dayaniyorsa, o kod
+# depoya girer.
 
 # Yedekler ve gecici dosyalar
 *.bak

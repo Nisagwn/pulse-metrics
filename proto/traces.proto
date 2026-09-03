@@ -4,7 +4,7 @@ package pulse.v1;
 
 import "google/protobuf/timestamp.proto";
 
-option go_package = "github.com/nisah/pulse-metrics/internal/proto";
+option go_package = "github.com/nisah/pulse-metrics/pkg/pulsepb";
 
 // TracesPayload: batch of spans from agent
 message TracesPayload {

@@ -4,7 +4,7 @@ import (
 	"sync"
 	"testing"
 
-	pb "github.com/nisah/pulse-metrics/internal/proto"
+	pb "github.com/nisah/pulse-metrics/pkg/pulsepb"
 )
 
 func TestMetricsCollectorBosBaslar(t *testing.T) {

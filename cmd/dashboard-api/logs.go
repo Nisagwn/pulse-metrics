@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nisah/pulse-metrics/internal/logging"
-	pb "github.com/nisah/pulse-metrics/internal/proto"
+	"github.com/nisah/pulse-metrics/pkg/logging"
+	pb "github.com/nisah/pulse-metrics/pkg/pulsepb"
 )
 
 // --- loglar -----------------------------------------------------------------

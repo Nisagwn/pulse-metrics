@@ -19,7 +19,7 @@ import (
 	"github.com/nisah/pulse-metrics/internal/config"
 	"github.com/nisah/pulse-metrics/internal/health"
 	"github.com/nisah/pulse-metrics/internal/obs"
-	pb "github.com/nisah/pulse-metrics/internal/proto"
+	pb "github.com/nisah/pulse-metrics/pkg/pulsepb"
 )
 
 // Config: collector configuration

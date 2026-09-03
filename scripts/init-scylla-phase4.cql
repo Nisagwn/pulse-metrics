@@ -30,10 +30,30 @@
 -- Partition basina tek satir dustugu icin tablo dogal olarak sinirli:
 -- kural sayisi kadar partition, her birinde bir satir.
 -- ---------------------------------------------------------------------------
+-- notified kolonu: gecis ile bildirim ATOMIK DEGIL.
+--
+-- Gecisi kazanan surec, alarmi veritabanina yazip webhook'u gondermeden
+-- once olebilir. O zaman satir "tetiklenmis" der, ihlal surer ve hicbir
+-- degerlendirme bir daha bildirim uretmez - alarm sonsuza kadar susar.
+--
+-- Cozum satiri kucuk bir is kuyrugu gibi kullanmak: notified=false
+-- "yarim kalmis is" demektir. Sahibi makul bir sure icinde (iki
+-- degerlendirme turu) bitirmediyse baska bir collector devralir.
 CREATE TABLE IF NOT EXISTS pulse.alert_state (
     rule_id    TEXT PRIMARY KEY,
     firing     BOOLEAN,
+    notified   BOOLEAN,  -- bildirim tamamlandi mi?
     since_ms   BIGINT,   -- bu duruma ne zaman gecildi
     owner      TEXT,     -- gecisi hangi collector yapti (hata ayiklama icin)
     updated_ms BIGINT
 );
+
+-- Faz 4'ten kalan tablolar icin: SIRADAN bir kolon eklemek ucuz ve
+-- cevrimici bir islem - Scylla yalnizca sema surumunu gunceller, veriye
+-- dokunmaz. Partition key degistirmenin butun veriyi tasimayi
+-- gerektirdigini (bkz. cmd/pulse-migrate) dusununce, aradaki fark
+-- carpici.
+--
+-- ALTER'in IF NOT EXISTS karsiligi yok; kolon zaten varsa hata doner ve
+-- collector bu hatayi yutar.
+ALTER TABLE pulse.alert_state ADD notified BOOLEAN;

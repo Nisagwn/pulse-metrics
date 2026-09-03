@@ -2,7 +2,7 @@
 
 A production-grade Application Performance Monitoring (APM) platform built from scratch using Go, Kafka, ScyllaDB, and React.
 
-**Status:** Phase 4 complete - production ready: horizontally scalable, self-observable, migratable
+**Status:** Phase 5 complete - speaks OTLP: any language with an OpenTelemetry SDK can send data
 
 ---
 
@@ -67,11 +67,14 @@ pulse-metrics/
 │   │   ├── logquery.go     #   gRPC LogService + pattern detection
 │   │   └── alerts.go       #   alert engine + shared state (LWT) + gRPC
 │   ├── health/             # Shared /healthz + /readyz server
+│   ├── otlp/               # OpenTelemetry Protocol -> PulseMetrics
 │   ├── buildinfo/          # Version stamped in via -ldflags
 │   ├── config/             # Env config + startup validation
 │   ├── obs/                # Self-metrics (Prometheus)
+pkg/                        # importable from other modules
+│   ├── pulsepb/            # generated protobuf types (committed on purpose)
 │   ├── logging/            # Log SDK: trace-correlated structured logging
-│   ├── tracing/            # Trace SDK: spans, W3C context, HTTP instrumentation
+│   └── tracing/            # Trace SDK: spans, W3C context, HTTP instrumentation
 │   │   ├── context.go      #   TraceID/SpanID, traceparent parse & format
 │   │   ├── tracer.go       #   Tracer, Span, samplers
 │   │   ├── exporter.go     #   Batching Kafka exporter
@@ -575,6 +578,88 @@ partition ends) minus `OffsetFetch` (where the group has committed).
 
 ---
 
+## Phase 5: Opening Up (OTLP) - complete
+
+- [x] **OTLP receiver** (`cmd/otlp-gateway`) - gRPC :4317 and HTTP :4318
+- [x] SDK moved out of `internal/` so other projects can import it
+- [x] Generated protobuf code committed (a module has to build for its consumers)
+- [x] CI (GitHub Actions): unit, integration, generated-code drift, container builds
+- [x] Stale `alert_state` row can no longer silence a rule
+
+### The wall Phase 4 left standing
+
+Until Phase 5 the only way to send data to PulseMetrics was the Go SDK in
+this repository. Go's `internal/` rule made that a compiler-enforced limit:
+`import "github.com/nisah/pulse-metrics/internal/tracing"` fails to build
+from any other module. So the system could only observe programs that were
+(a) written in Go and (b) inside this repo.
+
+OTLP is the common language of observability. Python, Java, Node, Rust,
+.NET - every official OpenTelemetry SDK speaks it. Accepting it turns "a
+project that monitors itself" into "a system that can monitor anything":
+
+```bash
+# Python, no PulseMetrics-specific code at all
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 \
+OTEL_SERVICE_NAME=checkout \
+opentelemetry-instrument python app.py
+```
+
+`examples/otlp-curl.sh` proves the point without any SDK: plain `curl`
+sends a two-service trace, correlated logs and a histogram.
+
+### Why a separate process
+
+The gateway could have lived inside the collector. It shouldn't: in
+PulseMetrics the ingest boundary is **Kafka**, and anything that can write
+to Kafka is a valid source. The collector's job is Kafka -> ScyllaDB; the
+gateway's job is HTTP/gRPC -> Kafka. They scale on different axes - the
+gateway with client count, the collector with data volume.
+
+Which also says something clarifying: the OTLP receiver is not a special
+component. It is just another producer. So is our own SDK.
+
+### Where the two data models fight
+
+OTLP is rich and nested; PulseMetrics is flat. The conversion's job is to
+make the loss **visible and deliberate**, never silent:
+
+| OTLP | PulseMetrics | Note |
+|---|---|---|
+| nested attributes | `map<string,string>` | flattened with dotted keys, depth-capped |
+| `trace_id` as raw bytes | hex string | wrong length -> rejected, not stored broken |
+| Gauge / Sum | GAUGE / COUNTER | non-monotonic Sum becomes a GAUGE, not a counter |
+| Histogram | `_count`, `_sum`, `_bucket_le_*` | see below |
+| Summary | `_count`, `_sum`, `_q*` | pre-computed quantiles cannot be re-aggregated |
+| ExponentialHistogram | *rejected, counted* | reported via OTLP `partial_success` |
+
+Anything rejected is returned to the client in OTLP's `partial_success`
+field. Dropping data silently would let a client believe it is being
+monitored when it is not.
+
+**Why bucket bounds go in the metric name.** In Prometheus,
+`http_duration_bucket{le="0.5"}` and `{le="1"}` are distinct time series.
+The PulseMetrics equivalent of "distinct series" is a distinct *partition*,
+and the partition key is `(service, metric_name, bucket)` - labels are not
+part of it. Putting `le` in a tag would write every bucket to the same
+partition, same timestamp, same `instance_id`: the clustering key would
+collide and only the last bucket would survive. Exactly the silent data
+loss `instance_id` caused back in Phase 1.
+
+### A standards conflict worth knowing about
+
+Protobuf's official JSON mapping encodes `bytes` as base64. The OTLP
+specification deliberately deviates for `trace_id` and `span_id` and
+requires **hex** - being able to read a trace id by eye beats consistency.
+
+So handing a real SDK's OTLP/JSON straight to `protojson` decodes 32 hex
+characters as base64, gets 24 bytes, and rejects the span. Your own curl
+test with base64 would pass while every real client silently failed - one
+of the harder bugs to notice. `internal/otlp/json.go` converts hex to
+base64 before decoding, and accepts both.
+
+---
+
 ## Configuration
 
 ### Environment Variables
@@ -717,8 +802,9 @@ MIT (placeholder)
 
 ## Next Steps
 
-Phases 1-4 are done. Paid off in Phase 4: the unbounded `metrics` partition,
-the in-memory alert state, and the `r.URL.Path` cardinality risk.
+Phases 1-5 are done. Paid off so far: the unbounded `metrics` partition,
+the in-memory alert state, the `r.URL.Path` cardinality risk, the stale
+`alert_state` row, and the closed-ecosystem limitation.
 
 What is still open, honestly:
 
@@ -726,17 +812,22 @@ What is still open, honestly:
   index; queries narrow by partition and time range first, then filter in
   memory. Correct and verifiable at this scale, wrong at large scale - that job
   belongs to a search index (OpenSearch, Quickwit, Loki).
-- **No authentication anywhere.** The gRPC API, the dashboard and the alert
-  rule endpoints are all open. Fine on localhost, not deployable to a shared
-  network as-is. mTLS between components and an auth proxy in front of the
-  dashboard is the smallest honest fix.
+- **No authentication anywhere.** The gRPC API, the dashboard, the alert rule
+  endpoints and now the OTLP gateway are all open. Fine on localhost, not
+  deployable to a shared network as-is - and the OTLP gateway makes this more
+  pressing, because it is the endpoint you would actually expose. mTLS between
+  components plus a bearer token on the gateway is the smallest honest fix.
+  **This is the next thing to build.**
 - **The dashboard is a single embedded HTML file** using React via CDN, no build
   step. Vite + TypeScript is worthwhile once it grows.
 - **Span events are stored as a JSON string column.** Fine while events are rare;
   revisit if they become a primary query dimension.
-- **A stale `alert_state` row can silence a rule.** If a collector sets
-  `firing=true` and dies before notifying, the rule stays "firing" and the next
-  real breach is not reported. A staleness check on `updated_ms` would close it.
+- **No metric downsampling.** 30 days of raw 10-second points is expensive and
+  nobody queries a month at that resolution. Rollup tables (`metrics_1m`,
+  `metrics_1h`) with a resolution-picking query router is the classic fix.
+- **OTLP exponential histograms are rejected.** They encode bucket bounds from
+  a base and scale rather than listing them; convertible, but there is no
+  PulseMetrics representation for them yet.
 - **The migration tool stops the world.** Correct at this size, wrong at
   production volume - `docs/OPERATIONS.md` describes the dual-write alternative
   that needs no downtime and no copying.

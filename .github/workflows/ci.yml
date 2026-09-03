@@ -1,0 +1,179 @@
+# PulseMetrics surekli entegrasyon.
+#
+# Faz 5'e kadar testler yalnizca gelistiricinin makinesinde kosuyordu.
+# Depo herkese acik; bir katki geldiginde ya da alti ay sonra geri
+# donuldugunde neyin bozuldugunu soyleyecek bir sey yoktu. Faz 1-4'te
+# yazilan butun testleri curumekten koruyan sey bu dosya.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Ayni dal icin yeni bir push gelirse eskisini iptal et: bekleyen
+# kosular sirayi tikamasin.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: "1.25"
+
+jobs:
+  # ---------------------------------------------------------------------
+  # Hizli geri bildirim: bicim, statik analiz, birim testleri.
+  # Altyapi gerektirmez, bir dakikanin altinda biter.
+  # ---------------------------------------------------------------------
+  test:
+    name: Birim testleri
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "Bicimlendirilmemis dosyalar:"
+            echo "$unformatted"
+            echo "Duzeltmek icin: gofmt -w ."
+            exit 1
+          fi
+
+      - name: go vet
+        run: |
+          go vet ./...
+          # Entegrasyon testleri build tag'i arkasinda; onlar da
+          # derlenebilir olmali, yoksa bozukluk kimseye gorunmez.
+          go vet -tags integration ./...
+
+      # -race olmadan calistirmanin anlami yok: bu projede eszamanli
+      # calisan cok sey var (uc Kafka okuyucusu, toplu gonderici,
+      # alarm motoru) ve yaris kosullari ancak boyle yakalaniyor.
+      - name: Birim testleri (-race)
+        run: go test -race -timeout 10m ./internal/... ./pkg/...
+
+      - name: Ikilileri derle
+        run: |
+          for cmd in agent collector dashboard-api demo pulse-migrate otlp-gateway; do
+            go build -o /dev/null ./cmd/$cmd
+          done
+
+  # ---------------------------------------------------------------------
+  # Uretilen kod guncel mi?
+  #
+  # pkg/pulsepb depoya giriyor (disaridan import edilebilmesi icin).
+  # Bu, .proto dosyasini degistirip yeniden uretmeyi unutmayi mumkun
+  # kiliyor - ve o durumda kod sessizce eski semayla derlenir.
+  # ---------------------------------------------------------------------
+  proto:
+    name: Uretilen kod guncel mi
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - uses: arduino/setup-protoc@v3
+        with:
+          version: "27.2"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: protoc eklentileri
+        run: |
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+
+      - name: Yeniden uret ve karsilastir
+        run: |
+          make proto
+          if ! git diff --exit-code -- pkg/pulsepb; then
+            echo ""
+            echo "Uretilen kod .proto dosyalariyla uyusmuyor."
+            echo "Duzeltmek icin: make proto && git add pkg/pulsepb"
+            exit 1
+          fi
+
+  # ---------------------------------------------------------------------
+  # Gercek altyapiyla uctan uca testler.
+  #
+  # docker compose kullaniyoruz - GitHub Actions'in "services" ozelligi
+  # yerine bilerek: gelistiricinin makinede calistirdigi komutlarin
+  # aynisi. CI'in yesil olmasi, "bende calisiyor"un da gecerli oldugu
+  # anlamina geliyor.
+  # ---------------------------------------------------------------------
+  integration:
+    name: Entegrasyon testleri
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Altyapiyi kaldir
+        run: docker compose up -d zookeeper kafka scylladb
+
+      - name: ScyllaDB hazir olana kadar bekle
+        run: |
+          for i in $(seq 1 60); do
+            if docker exec pulse-scylladb cqlsh -e "SELECT release_version FROM system.local" >/dev/null 2>&1; then
+              echo "ScyllaDB hazir ($i deneme)"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "ScyllaDB 5 dakikada hazir olmadi"
+          docker compose logs scylladb | tail -50
+          exit 1
+
+      - name: Kafka hazir olana kadar bekle
+        run: |
+          for i in $(seq 1 40); do
+            if docker exec pulse-kafka kafka-broker-api-versions --bootstrap-server localhost:9092 >/dev/null 2>&1; then
+              echo "Kafka hazir ($i deneme)"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Kafka hazir olmadi"
+          docker compose logs kafka | tail -50
+          exit 1
+
+      - name: Entegrasyon testleri
+        run: go test -tags integration -v -timeout 20m ./test/...
+
+      - name: Basarisizlikta altyapi loglari
+        if: failure()
+        run: docker compose logs --tail 100
+
+  # ---------------------------------------------------------------------
+  # Konteyner imajlari derleniyor mu? (yayinlamiyoruz, sadece derliyoruz)
+  # ---------------------------------------------------------------------
+  docker:
+    name: Konteyner imajlari
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Imajlari derle
+        run: |
+          for cmd in collector agent dashboard-api otlp-gateway; do
+            docker build --build-arg CMD_NAME=$cmd -t pulse/$cmd:ci .
+          done
+
+      - name: Ikili calisiyor mu?
+        run: docker run --rm pulse/collector:ci -version

@@ -19,7 +19,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/nisah/pulse-metrics/internal/obs"
-	pb "github.com/nisah/pulse-metrics/internal/proto"
+	pb "github.com/nisah/pulse-metrics/pkg/pulsepb"
 )
 
 // Alarm motoru varsayilanlari.
@@ -41,15 +41,34 @@ const alertStateDDL = `
 	CREATE TABLE IF NOT EXISTS pulse.alert_state (
 		rule_id    TEXT PRIMARY KEY,
 		firing     BOOLEAN,
+		notified   BOOLEAN,
 		since_ms   BIGINT,
 		owner      TEXT,
 		updated_ms BIGINT
 	)`
 
+// alertStateNotifiedDDL: notified kolonunu var olan tabloya ekler.
+//
+// CREATE TABLE IF NOT EXISTS var olan bir tabloyu degistirmez, bu yuzden
+// Faz 4'ten kalan tablolarda kolon ALTER ile ekleniyor.
+//
+// Buradaki karsitlik ogretici: SIRADAN bir kolon eklemek ucuz ve
+// cevrimici bir islem - Scylla yalnizca sema surumunu gunceller, veriye
+// dokunmaz. Faz 4'te partition key'i degistirmek ise butun veriyi
+// tasimayi gerektirmisti. Ayni tabloda, iki tamamen farkli maliyet.
+const alertStateNotifiedDDL = `ALTER TABLE pulse.alert_state ADD notified BOOLEAN`
+
 // ensurePhase4Schema: Faz 4'te eklenen tablolar.
 func ensurePhase4Schema(session *gocql.Session, logger *zap.Logger) error {
 	if err := session.Query(alertStateDDL).Exec(); err != nil {
 		return fmt.Errorf("alert_state tablosu yaratilamadi: %w", err)
+	}
+	// Kolon zaten varsa hata doner; bu beklenen durum, yutuyoruz.
+	// ALTER'in IF NOT EXISTS karsiligi yok.
+	if err := session.Query(alertStateNotifiedDDL).Exec(); err != nil &&
+		!strings.Contains(strings.ToLower(err.Error()), "conflicts with an existing column") &&
+		!strings.Contains(strings.ToLower(err.Error()), "already exists") {
+		return fmt.Errorf("alert_state.notified eklenemedi: %w", err)
 	}
 	logger.Info("Phase 4 schema ensured")
 	return nil
@@ -175,7 +194,24 @@ const (
 	// Yatay olceklendirmenin dogru calistiginin kaniti; sifirdan
 	// buyuk olmasi beklenir ve iyidir.
 	transitionLost
+	// transitionReclaimed: gecis daha once yapilmis ama bildirimi
+	// tamamlanmamis; bu surec yarim kalan isi devraldi.
+	transitionReclaimed
 )
+
+// staleAfter: bildirimi tamamlanmamis bir gecis ne kadar sonra
+// "sahibi olmus" sayilir?
+//
+// Iki degerlendirme turu bekliyoruz: sahibi hayattaysa bu sure icinde
+// isini bitirir. Alt sinir 60 saniye, cunku cok kisa araliklarla calisan
+// bir motor kendi kendini devralmaya baslardi.
+func (e *AlertEngine) staleAfter() time.Duration {
+	d := 2 * e.interval
+	if d < time.Minute {
+		d = time.Minute
+	}
+	return d
+}
 
 // tryTransition: kuralin durumunu !desired -> desired olarak degistirmeye
 // calisir. transitionWon dondurduyse gecisi BU surec yapti.
@@ -205,9 +241,14 @@ func (e *AlertEngine) tryTransition(ctx context.Context, ruleID string, desired 
 	// Her degerlendirmede dogrudan LWT calistirmak, saniyede birkac kez
 	// Paxos uzlasmasi demekti - istisnai durumun bedelini her tura
 	// yaymak. Sradan bir SELECT ise tek gidis-donus.
-	var firing bool
-	err := e.session.Query(`SELECT firing FROM alert_state WHERE rule_id = ?`, ruleID).
-		WithContext(ctx).Scan(&firing)
+	var (
+		firing    bool
+		notified  bool
+		updatedMs int64
+	)
+	err := e.session.Query(
+		`SELECT firing, notified, updated_ms FROM alert_state WHERE rule_id = ?`, ruleID).
+		WithContext(ctx).Scan(&firing, &notified, &updatedMs)
 
 	switch {
 	case errors.Is(err, gocql.ErrNotFound):
@@ -220,10 +261,10 @@ func (e *AlertEngine) tryTransition(ctx context.Context, ruleID string, desired 
 		// ihlali gorurse yalnizca biri yaratabilsin.
 		created := map[string]interface{}{}
 		applied, insErr := e.session.Query(`
-			INSERT INTO alert_state (rule_id, firing, since_ms, owner, updated_ms)
-			VALUES (?, ?, ?, ?, ?)
+			INSERT INTO alert_state (rule_id, firing, notified, since_ms, owner, updated_ms)
+			VALUES (?, ?, ?, ?, ?, ?)
 			IF NOT EXISTS`,
-			ruleID, true, now, e.owner, now,
+			ruleID, true, false, now, e.owner, now,
 		).WithContext(ctx).MapScanCAS(created)
 		if insErr != nil {
 			return transitionNone, fmt.Errorf("alarm durumu yaratilamadi: %w", insErr)
@@ -237,7 +278,20 @@ func (e *AlertEngine) tryTransition(ctx context.Context, ruleID string, desired 
 		return transitionNone, fmt.Errorf("alarm durumu okunamadi: %w", err)
 
 	case firing == desired:
-		// Durum zaten istedigimiz gibi. Gecis yok, LWT'ye gerek yok.
+		// Durum zaten istedigimiz gibi - ama BILDIRIM GITTI MI?
+		//
+		// Gecis ile bildirim atomik degil: gecisi kazanan surec
+		// veritabanina yazip webhook'u gondermeden once olebilir. O
+		// zaman satir "tetiklenmis" der, ihlal surer ve hicbir
+		// degerlendirme bir daha bildirim uretmez. Alarm sonsuza kadar
+		// susar - Faz 4'te bilerek acik biraktigim delik buydu.
+		//
+		// Cozum, satiri kucuk bir is kuyrugu gibi kullanmak:
+		// notified=false "yarim kalmis is" demek. Sahibi makul bir sure
+		// icinde bitirmediyse baska bir collector devralabilir.
+		if !notified && time.Since(time.UnixMilli(updatedMs)) > e.staleAfter() {
+			return e.reclaim(ctx, ruleID, now)
+		}
 		return transitionNone, nil
 	}
 
@@ -265,6 +319,45 @@ func (e *AlertEngine) tryTransition(ctx context.Context, ruleID string, desired 
 		return transitionWon, nil
 	}
 	return transitionLost, nil
+}
+
+// reclaim: bildirimi tamamlanmamis ve bayatlamis bir gecisi devralir.
+//
+// IF notified = false sarti yine yarisi tek kazanana indiriyor. Kazanan
+// updated_ms'i tazeledigi icin kaybedenin bir sonraki turda "bayat"
+// gormesi de engellenmis oluyor.
+func (e *AlertEngine) reclaim(ctx context.Context, ruleID string, now int64) (transitionResult, error) {
+	current := map[string]interface{}{}
+	applied, err := e.session.Query(`
+		UPDATE alert_state SET owner = ?, updated_ms = ?
+		WHERE rule_id = ?
+		IF notified = false`,
+		e.owner, now, ruleID,
+	).WithContext(ctx).MapScanCAS(current)
+	if err != nil {
+		return transitionNone, fmt.Errorf("yarim kalan bildirim devralinamadi: %w", err)
+	}
+	if applied {
+		return transitionReclaimed, nil
+	}
+	return transitionLost, nil
+}
+
+// markNotified: bildirim tamamlandi, is kapandi.
+//
+// Bu sradan bir UPDATE, LWT degil: bu noktada satirin sahibi biziz ve
+// yarisacak kimse yok.
+func (e *AlertEngine) markNotified(ctx context.Context, ruleID string) {
+	if err := e.session.Query(
+		`UPDATE alert_state SET notified = true, updated_ms = ? WHERE rule_id = ?`,
+		time.Now().UnixMilli(), ruleID,
+	).WithContext(ctx).Exec(); err != nil {
+		// Yazilamazsa alarm yine de gonderildi; en kotu ihtimalle baska
+		// bir collector bayat sanip tekrar gonderir. Kaybetmektense
+		// tekrarlamak dogru takas.
+		e.logger.Warn("Bildirim tamamlandi isaretlenemedi",
+			zap.String("rule", ruleID), zap.Error(err))
+	}
 }
 
 // Run: ctx iptal edilene kadar kurallari degerlendirir.
@@ -364,8 +457,15 @@ func (e *AlertEngine) evaluateRule(ctx context.Context, rule *pb.AlertRule) (*pb
 	case transitionLost:
 		obs.AlertTransitions.WithLabelValues(state, "lost").Inc()
 		return nil, nil
+	case transitionReclaimed:
+		// Sifirdan buyuk olmasi bir collector'in bildirim gonderemeden
+		// oldugunu soyler - izlemeye deger bir sinyal.
+		obs.AlertTransitions.WithLabelValues(state, "reclaimed").Inc()
+		e.logger.Warn("Yarim kalan alarm bildirimi devralindi",
+			zap.String("rule", rule.RuleId), zap.String("state", state))
+	default:
+		obs.AlertTransitions.WithLabelValues(state, "won").Inc()
 	}
-	obs.AlertTransitions.WithLabelValues(state, "won").Inc()
 
 	alert := buildAlert(rule, cond, value, !breached)
 
@@ -375,6 +475,8 @@ func (e *AlertEngine) evaluateRule(ctx context.Context, rule *pb.AlertRule) (*pb
 	if rule.WebhookUrl != "" {
 		e.notify(ctx, rule.WebhookUrl, alert)
 	}
+	// Is bitti: satiri kapat ki baska bir collector devralmasin.
+	e.markNotified(ctx, rule.RuleId)
 
 	e.logger.Info("Alarm durumu degisti",
 		zap.String("rule", rule.RuleId),

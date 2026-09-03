@@ -24,7 +24,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/nisah/pulse-metrics/internal/collector"
-	pb "github.com/nisah/pulse-metrics/internal/proto"
+	pb "github.com/nisah/pulse-metrics/pkg/pulsepb"
 )
 
 // startCollectorWithHealth: startFullCollector'in saglik adresini de
