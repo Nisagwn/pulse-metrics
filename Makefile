@@ -20,6 +20,9 @@ endif
 # makinemde farkli" sorunu uretilen koda tasinir.
 #
 # Tek dogruluk kaynagi burasi: CI de "make tools" calistiriyor.
+# protoc'un kendi surumu de sabit: uretilen dosyalarin basligina
+# yaziliyor, yani surum farki kod farki demek.
+PROTOC_VERSION             ?= 36.1
 PROTOC_GEN_GO_VERSION      ?= v1.36.11
 PROTOC_GEN_GO_GRPC_VERSION ?= v1.6.2
 
