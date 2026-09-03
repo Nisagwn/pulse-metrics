@@ -89,10 +89,14 @@ jobs:
           version: "27.2"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: protoc eklentileri
-        run: |
-          go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+      # @latest DEGIL: surumler Makefile'da sabit.
+      #
+      # Ilk surumde burada @latest vardi ve is ilk kosuda dustu - CI'in
+      # cektigi eklenti surumu yerelde uretilenden farkli kod uretiyordu.
+      # Uretilen kodu depoda tutan bir projede eklenti surumu bir
+      # bagimliliktir ve sabitlenmesi gerekir.
+      - name: protoc eklentileri (sabit surum)
+        run: make tools
 
       - name: Yeniden uret ve karsilastir
         run: |

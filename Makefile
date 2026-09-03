@@ -1,5 +1,5 @@
 .PHONY: help build proto docker logs clean test test-integration test-all health run-demo alerts evaluate \
-        migrate migrate-dry topics metrics scale-up docker-images docker-apps version build-migrate
+        migrate migrate-dry topics metrics scale-up docker-images docker-apps version build-migrate \n        tools build-otlp
 
 # Windows'ta uretilen ikiliye .exe uzantisi ver.
 # Go -o ile verilen adi oldugu gibi kullanir; uzantisiz bir dosya
@@ -11,9 +11,21 @@ else
 EXE :=
 endif
 
+# protoc eklenti surumleri SABITLENIYOR.
+#
+# CI ilk surumde bunlari @latest ile kuruyordu ve is ilk kosuda dustu:
+# eklentinin yeni surumu, yerelde uretilenden farkli kod uretiyordu
+# (status.Errorf yerine status.Error gibi). Uretilen kodu depoda tutan
+# bir projede eklenti surumu bir BAGIMLILIKTIR; sabitlenmezse "benim
+# makinemde farkli" sorunu uretilen koda tasinir.
+#
+# Tek dogruluk kaynagi burasi: CI de "make tools" calistiriyor.
+PROTOC_GEN_GO_VERSION      ?= v1.36.11
+PROTOC_GEN_GO_GRPC_VERSION ?= v1.6.2
+
 # Surum bilgisi ikiliye -ldflags ile gomulur; /healthz ve
 # Prometheus'taki pulse_build_info bunu gosterir.
-VERSION ?= v0.4.0
+VERSION ?= v0.5.0
 COMMIT  := $(shell git rev-parse --short=12 HEAD 2>/dev/null)
 LDFLAGS := -X github.com/nisah/pulse-metrics/internal/buildinfo.Version=$(VERSION) \
            -X github.com/nisah/pulse-metrics/internal/buildinfo.Commit=$(COMMIT)
@@ -84,6 +96,12 @@ docker-status:
 # bir daha guncellenmemisti. Yani proto'daki bir servis tanimini
 # degistirip "make proto" calistirsan sapla eski kalirdi ve bunu ancak
 # derleme hatasi (ya da daha kotusu, hic hata almadan) fark ederdin.
+tools:
+	@echo "$(BLUE)protoc eklentileri kuruluyor (sabit surumler)...$(NC)"
+	go install google.golang.org/protobuf/cmd/protoc-gen-go@$(PROTOC_GEN_GO_VERSION)
+	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@$(PROTOC_GEN_GO_GRPC_VERSION)
+	@echo "$(GREEN)Eklentiler hazir$(NC)"
+
 proto:
 	@echo "$(BLUE)Generating protobuf code...$(NC)"
 	@mkdir -p pkg/pulsepb
