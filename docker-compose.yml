@@ -12,6 +12,17 @@ services:
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      # Otomatik yaratilan topic'ler kac partition alsin?
+      #
+      # Faz 4'e kadar 1 idi ve bu, tuketici paralelligini yukaridan
+      # kilitleyen bir sinirdi: bir consumer group'ta ayni anda en fazla
+      # PARTITION SAYISI kadar tuketici is yapabilir. Tek partition ile
+      # ikinci collector'i acsan da bos oturur.
+      #
+      # 3 partition = ayni anda 3 collector calisabilir. Partition
+      # sayisini sonradan artirmak mumkun ama anahtar->partition
+      # eslemesini degistirir; bastan yeterli vermek daha temiz.
+      KAFKA_NUM_PARTITIONS: 3
     depends_on:
       - zookeeper
     ports:
@@ -71,11 +82,17 @@ services:
     ports:
       - "3000:3000"
     environment:
-      GF_SECURITY_ADMIN_PASSWORD: admin
+      # Gelistirme icin admin/admin. Uretimde bunlar bir gizli
+      # depodan (secret) gelmeli; imaja gomulu parola parola degildir.
       GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
     volumes:
       - grafana-data:/var/lib/grafana
       - ./config/grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      # Faz 4: PulseMetrics'in kendi panosu. Dosyadan yuklendigi icin
+      # surum kontrolunde durur ve konteyner yeniden kurulunca kaybolmaz.
+      - ./config/grafana-dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
+      - ./config/dashboards:/etc/grafana/provisioning/dashboards/pulse:ro
     depends_on:
       - prometheus
 

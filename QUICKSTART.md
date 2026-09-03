@@ -95,6 +95,7 @@ rows instead of overwriting each other.
 | agent health  | 8081    | `/healthz`, `/readyz`        |
 | collector     | 8082    | `/healthz`, `/readyz`        |
 | collector     | 50051   | gRPC Metrics/Trace/Log/Alert |
+| collector     | 8082    | /healthz /readyz /metrics    |
 | Kafka         | 9092    |                              |
 | ScyllaDB      | 9042    | CQL                          |
 | Prometheus    | 9090    |                              |
@@ -126,6 +127,25 @@ curl "localhost:8080/api/v1/trace?id=<trace_id>"
 
 Panelde ayni sey iki tiklama: Loglar sekmesinde bir trace_id'ye tikla,
 trace'in waterfall'i ve altinda o trace'in loglari acilir.
+
+## Faz 4: iki collector
+
+```bash
+make topics        # topic'leri 3 partition'a cikar (paralellik tavani)
+
+PULSE_INSTANCE_ID=collector-1 ./bin/collector -port 50051 -health :8082
+PULSE_INSTANCE_ID=collector-2 ./bin/collector -port 50053 -health :8084
+
+# Partition'lar gercekten bolusuluyor mu?
+docker exec pulse-kafka kafka-consumer-groups \
+  --bootstrap-server localhost:9092 --describe --group pulse-collector
+
+# Ayni alarm gecisi: birinde won, digerinde lost
+curl -s localhost:8082/metrics | grep pulse_alert_transitions
+curl -s localhost:8084/metrics | grep pulse_alert_transitions
+```
+
+Ayrintili isletim bilgisi: `docs/OPERATIONS.md`
 
 ## Tests
 

@@ -2,7 +2,7 @@
 
 A production-grade Application Performance Monitoring (APM) platform built from scratch using Go, Kafka, ScyllaDB, and React.
 
-**Status:** Phase 3 complete - metrics, traces, logs, alerting, anomaly detection
+**Status:** Phase 4 complete - production ready: horizontally scalable, self-observable, migratable
 
 ---
 
@@ -65,8 +65,11 @@ pulse-metrics/
 │   │   ├── tracequery.go   #   gRPC TraceService + topology
 │   │   ├── logs.go         #   log ingest
 │   │   ├── logquery.go     #   gRPC LogService + pattern detection
-│   │   └── alerts.go       #   alert engine + gRPC AlertService
+│   │   └── alerts.go       #   alert engine + shared state (LWT) + gRPC
 │   ├── health/             # Shared /healthz + /readyz server
+│   ├── buildinfo/          # Version stamped in via -ldflags
+│   ├── config/             # Env config + startup validation
+│   ├── obs/                # Self-metrics (Prometheus)
 │   ├── logging/            # Log SDK: trace-correlated structured logging
 │   ├── tracing/            # Trace SDK: spans, W3C context, HTTP instrumentation
 │   │   ├── context.go      #   TraceID/SpanID, traceparent parse & format
@@ -288,6 +291,28 @@ again when it resolves. Re-evaluating while the state is unchanged produces
 nothing - the engine tracks which rules are currently firing so a breach is
 reported once, not every tick.
 
+### 6g. Scale out and watch it stay correct
+
+```bash
+make topics        # Kafka topics -> 3 partitions (consumer parallelism ceiling)
+
+# Two collectors, same consumer group
+PULSE_INSTANCE_ID=collector-1 ./bin/collector -port 50051 -health :8082
+PULSE_INSTANCE_ID=collector-2 ./bin/collector -port 50053 -health :8084
+
+# Partitions really are split between them:
+docker exec pulse-kafka kafka-consumer-groups \
+  --bootstrap-server localhost:9092 --describe --group pulse-collector
+
+# Each collector's own metrics:
+make metrics
+curl -s localhost:8084/metrics | grep pulse_alert_transitions
+```
+
+Grafana (http://localhost:3000, admin/admin) now has a **PulseMetrics ->
+Collector** dashboard with ingest rate, Kafka lag, error breakdown, ingest
+p95, alert transitions and Go runtime metrics.
+
 ### 7. Verify Data in ScyllaDB
 
 ```bash
@@ -453,13 +478,100 @@ works - a service handling 200 req/s by day and 20 by night cannot have one.
 
 ---
 
-## Phase 4: Production Readiness (Weeks 19-22)
+## Phase 4: Production Readiness (Weeks 19-22) - complete
 
-- [ ] Multi-instance collector deployment
-- [ ] ScyllaDB replication & failover
-- [ ] Comprehensive documentation
-- [ ] PulseCity integration example
-- [ ] Public GitHub release
+- [x] **Multi-instance collector deployment** - shared alert state via LWT
+- [x] **Schema migration** - `metrics` finally has an hourly `time_bucket`
+- [x] ScyllaDB replication & consistency configurable (`NetworkTopologyStrategy`, `LOCAL_QUORUM`)
+- [x] **Self-observability** - Prometheus `/metrics` on every binary + provisioned Grafana dashboard
+- [x] Cardinality guard on operation names (the `r.URL.Path` debt)
+- [x] Environment-based config with startup validation
+- [x] Containerization (`Dockerfile`, `docker-compose.apps.yml` with two collectors)
+- [x] Operations runbook (`docs/OPERATIONS.md`)
+
+### Running two collectors
+
+The headline of Phase 4. Two collectors in the same consumer group split
+Kafka partitions between them - neither processes the same message twice:
+
+```bash
+PULSE_INSTANCE_ID=collector-1 ./bin/collector -port 50051 -health :8082
+PULSE_INSTANCE_ID=collector-2 ./bin/collector -port 50053 -health :8084
+```
+
+Ingest was already safe to scale this way. **Alerting was not.** In Phase 3
+"which rules are currently firing" lived in each process's memory: two
+collectors meant two memories, and every alert fired twice. Horizontal
+scaling did not break the system in an obvious way - it did something more
+insidious.
+
+Phase 4 moves that state into `pulse.alert_state` and performs the
+transition with a **lightweight transaction** (CQL's `IF` clause):
+
+```sql
+UPDATE alert_state SET firing = true, ... WHERE rule_id = ? IF firing = false
+```
+
+A plain `UPDATE` is last-write-wins, so both collectors would succeed and
+both would notify. With `IF`, Scylla runs Paxos underneath and applies the
+update *only* if the current value is still what we expected. Exactly one
+collector wins; the loser gets `[applied]=false` and stays quiet.
+
+No leader election needed - the transition itself provides the mutual
+exclusion, and a leader would have been one more moving part to keep alive.
+
+LWT is expensive (four round trips plus consensus), so it runs **only on an
+actual state change**. Ordinary evaluation rounds do a cheap `SELECT` first
+and never reach Paxos when nothing changed.
+
+```bash
+curl -s localhost:8082/metrics | grep pulse_alert_transitions
+curl -s localhost:8084/metrics | grep pulse_alert_transitions
+# same transition: result="won" on one, result="lost" on the other
+```
+
+**Partition count is the ceiling.** At most *partition count* consumers in a
+group can do work at once; with one partition the second collector just sits
+idle. The default is now 3 (`make topics` raises existing topics).
+
+### The schema migration
+
+Cassandra and Scylla cannot change a partition key. Columns can be added,
+TTLs changed - but not the key that decides which node holds the data,
+because that would mean redistributing everything. So this:
+
+```
+Phase 1-3: PRIMARY KEY ((service_name, metric_name), timestamp, instance_id)
+Phase 4:   PRIMARY KEY ((service_name, metric_name, time_bucket), timestamp, instance_id)
+```
+
+is not an `ALTER`, it is a **move**. `cmd/pulse-migrate` does it, preserving
+each row's remaining TTL (`TTL(value)` read, `USING TTL` written) - without
+that, a 29-day-old measurement would get a fresh 30 days and the table would
+keep growing when it should shrink.
+
+`CREATE TABLE IF NOT EXISTS` silently does nothing to an existing table, so
+the collector now **verifies the schema at startup** and refuses to run
+against the old one. The alternative is worse: a collector that reports
+healthy, keeps consuming, and drops every message it cannot write. Silent
+data loss always costs more than a loud startup failure.
+
+### Self-observability
+
+The most annoying failure of a monitoring system is stopping quietly: the
+graph flatlines and nobody can tell "no traffic" from "collector died".
+
+PulseMetrics does not monitor itself - that would be circular. Whatever
+reports the collector's death has to be a *different* system, and the
+Prometheus already sitting in `docker-compose.yml` is exactly that. Every
+binary exposes `/metrics` next to `/healthz` and `/readyz`, and Grafana
+loads a dashboard from `config/dashboards/` - so it survives the container
+being recreated.
+
+The metric to watch is `pulse_collector_kafka_lag`. Computing it correctly
+took a second attempt: kafka-go's `Reader.Lag()` returns `-1` for consumer
+groups by design, so the real lag is derived from `ListOffsets` (where each
+partition ends) minus `OffsetFetch` (where the group has committed).
 
 ---
 
@@ -605,24 +717,26 @@ MIT (placeholder)
 
 ## Next Steps
 
-Phases 1-3 are done. Carried into Phase 4 (production readiness):
+Phases 1-4 are done. Paid off in Phase 4: the unbounded `metrics` partition,
+the in-memory alert state, and the `r.URL.Path` cardinality risk.
 
-- **`metrics` partitions are still unbounded.** `trace_index`, `logs`,
-  `service_edges` and `alerts` all use an hourly `time_bucket` in their partition
-  key. `pulse.metrics` - written first, before that lesson - still does not.
-  Fixing it is another breaking schema change, so it is grouped with the other
-  Phase 4 migrations rather than done piecemeal.
+What is still open, honestly:
+
 - **Log search filters in Go, not in the database.** ScyllaDB has no full-text
   index; queries narrow by partition and time range first, then filter in
   memory. Correct and verifiable at this scale, wrong at large scale - that job
-  belongs to a search index.
-- **Alert engine state is in memory.** Which rules are currently firing lives in
-  one process. Run two collectors and both will notify. Needs a shared lease or
-  a `firing` column before horizontal scaling.
-- **Operation names come from `r.URL.Path`.** A path like `/orders/12345` creates
-  a distinct operation per id (cardinality explosion). Use the router route
-  template instead once there is a router.
+  belongs to a search index (OpenSearch, Quickwit, Loki).
+- **No authentication anywhere.** The gRPC API, the dashboard and the alert
+  rule endpoints are all open. Fine on localhost, not deployable to a shared
+  network as-is. mTLS between components and an auth proxy in front of the
+  dashboard is the smallest honest fix.
 - **The dashboard is a single embedded HTML file** using React via CDN, no build
   step. Vite + TypeScript is worthwhile once it grows.
 - **Span events are stored as a JSON string column.** Fine while events are rare;
   revisit if they become a primary query dimension.
+- **A stale `alert_state` row can silence a rule.** If a collector sets
+  `firing=true` and dies before notifying, the rule stays "firing" and the next
+  real breach is not reported. A staleness check on `updated_ms` would close it.
+- **The migration tool stops the world.** Correct at this size, wrong at
+  production volume - `docs/OPERATIONS.md` describes the dual-write alternative
+  that needs no downtime and no copying.

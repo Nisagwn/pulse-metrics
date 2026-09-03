@@ -30,6 +30,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/nisah/pulse-metrics/internal/config"
 	"github.com/nisah/pulse-metrics/internal/logging"
 	pb "github.com/nisah/pulse-metrics/internal/proto"
 	"github.com/nisah/pulse-metrics/internal/tracing"
@@ -134,8 +135,9 @@ func jitter(base, spread time.Duration) {
 }
 
 func main() {
-	kafkaAddr := flag.String("kafka", "localhost:9092", "Kafka broker address")
-	rps := flag.Int("rps", 3, "Yuk ureteci: saniyedeki istek sayisi")
+	kafkaAddr := flag.String("kafka", config.Env("PULSE_KAFKA_BROKERS", "localhost:9092"),
+		"Kafka broker adresi")
+	rps := flag.Int("rps", config.EnvInt("PULSE_DEMO_RPS", 3), "Yuk ureteci: saniyedeki istek sayisi")
 	sampleRatio := flag.Float64("sample", 1.0, "Orneklem orani (0.0 - 1.0)")
 	flag.Parse()
 

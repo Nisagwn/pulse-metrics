@@ -410,8 +410,16 @@ func TestAlarmMotoru(t *testing.T) {
 	sess := scyllaSession(t)
 	cleanupLogs(t, sess, svc)
 	t.Cleanup(func() {
-		_ = sess.Query(`DELETE FROM metrics WHERE service_name = ? AND metric_name = ?`,
-			svc, metric).Exec()
+		// Faz 4: time_bucket partition key'e girdi. Test verisi birkac
+		// dakikaya yayildigi icin iki kovaya birden dusebilir.
+		now := time.Now()
+		for _, b := range []string{
+			collector.TimeBucket(now),
+			collector.TimeBucket(now.Add(-time.Hour)),
+		} {
+			_ = sess.Query(`DELETE FROM metrics WHERE service_name = ? AND metric_name = ? AND time_bucket = ?`,
+				svc, metric, b).Exec()
+		}
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -440,10 +448,11 @@ func TestAlarmMotoru(t *testing.T) {
 	writeMetric := func(value float64, ago time.Duration) {
 		ts := time.Now().Add(-ago).UnixMilli()
 		if err := sess.Query(`
-			INSERT INTO metrics (service_name, metric_name, timestamp, instance_id,
-			                     type, tags, labels, value)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			svc, metric, ts, "itest-1", "GAUGE", nil, nil, value).Exec(); err != nil {
+			INSERT INTO metrics (service_name, metric_name, time_bucket, timestamp,
+			                     instance_id, type, tags, labels, value)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			svc, metric, collector.TimeBucket(time.UnixMilli(ts)), ts,
+			"itest-1", "GAUGE", nil, nil, value).Exec(); err != nil {
 			t.Fatalf("metrik yazilamadi: %v", err)
 		}
 	}
@@ -480,10 +489,14 @@ func TestAlarmMotoru(t *testing.T) {
 		t.Fatalf("CreateRule hatasi: %v", err)
 	}
 	ruleID := created.GetRuleId()
+	// Dogrudan CQL: t.Cleanup, testin `defer cancel()`inden SONRA
+	// calisir, yani bu noktada collector'in gRPC sunucusu kapanmis olur
+	// ve DeleteRule cagrisi sessizce basarisiz olurdu.
 	t.Cleanup(func() {
-		dCtx, dCancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer dCancel()
-		_, _ = ac.DeleteRule(dCtx, &pb.DeleteRuleRequest{RuleId: ruleID})
+		_ = sess.Query(`DELETE FROM alert_rules WHERE rule_id = ?`, ruleID).Exec()
+		// Paylasilan alarm durumu (Faz 4) da gitmeli; kalirsa sonraki
+		// kosuda kural "tetiklenmis" dogar ve ilk ihlal bildirilmez.
+		_ = sess.Query(`DELETE FROM alert_state WHERE rule_id = ?`, ruleID).Exec()
 	})
 
 	// --- henuz tetiklenmemeli (max 10 < 100) ---

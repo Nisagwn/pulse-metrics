@@ -92,8 +92,22 @@ func TimeBucket(t time.Time) string {
 	return t.UTC().Format("2006010215")
 }
 
+// Kova tarama sinirlari. Bir sorgunun kac partition okuyabilecegini
+// yukaridan baglar; yoksa hatali bir zaman araligi butun kumeyi tarar.
+// Siniri veri TTL'ine gore secmek dogru olan: TTL'den eskisini aramanin
+// anlami yok.
+const (
+	traceBucketLimit  = 24 * 8  // trace/log TTL'i 7 gun
+	metricBucketLimit = 24 * 31 // metrik TTL'i 30 gun
+)
+
 // bucketsInRange: bir zaman araligini kapsayan tum kovalar (en yeniden eskiye).
 func bucketsInRange(startMs, endMs int64) []string {
+	return bucketsInRangeMax(startMs, endMs, traceBucketLimit)
+}
+
+// bucketsInRangeMax: ust sinir verilebilen surum.
+func bucketsInRangeMax(startMs, endMs int64, maxBuckets int) []string {
 	start := time.UnixMilli(startMs).UTC().Truncate(time.Hour)
 	end := time.UnixMilli(endMs).UTC()
 
@@ -102,7 +116,7 @@ func bucketsInRange(startMs, endMs int64) []string {
 	// yani erken durabilmek icin yeni kovalar once gelmeli.
 	for t := end.Truncate(time.Hour); !t.Before(start); t = t.Add(-time.Hour) {
 		out = append(out, TimeBucket(t))
-		if len(out) > 24*8 { // 8 gunden fazlasini taramaya calisma (TTL 7 gun)
+		if len(out) >= maxBuckets {
 			break
 		}
 	}

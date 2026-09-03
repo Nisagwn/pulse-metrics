@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gocql/gocql"
@@ -18,6 +18,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/nisah/pulse-metrics/internal/obs"
 	pb "github.com/nisah/pulse-metrics/internal/proto"
 )
 
@@ -30,6 +31,29 @@ const (
 	baselineMultiplier = 12
 	minBaselinePoints  = 10
 )
+
+// alertStateDDL: kurallarin PAYLASILAN tetiklenme durumu (Faz 4).
+//
+// TTL yok ve olmamali: bu tablo veri degil, KARAR tutuyor. Bir alarmin
+// tetiklenmis oldugu bilgisi 7 gun sonra kendiliginden silinirse, alarm
+// hala devam ederken sistem onu "yeni" sanip tekrar bildirir.
+const alertStateDDL = `
+	CREATE TABLE IF NOT EXISTS pulse.alert_state (
+		rule_id    TEXT PRIMARY KEY,
+		firing     BOOLEAN,
+		since_ms   BIGINT,
+		owner      TEXT,
+		updated_ms BIGINT
+	)`
+
+// ensurePhase4Schema: Faz 4'te eklenen tablolar.
+func ensurePhase4Schema(session *gocql.Session, logger *zap.Logger) error {
+	if err := session.Query(alertStateDDL).Exec(); err != nil {
+		return fmt.Errorf("alert_state tablosu yaratilamadi: %w", err)
+	}
+	logger.Info("Phase 4 schema ensured")
+	return nil
+}
 
 // Condition: "p95 > 500" gibi bir kosulun cozulmus hali.
 type Condition struct {
@@ -94,31 +118,153 @@ func (c Condition) String() string {
 }
 
 // AlertEngine: kurallari periyodik olarak degerlendirir.
+//
+// Faz 4'te en onemli degisiklik burada: "hangi kural su anda tetiklenmis"
+// bilgisi artik BELLEKTE DEGIL, veritabaninda.
+//
+// Faz 3'te bu bir map[string]bool idi ve tek collector varken dogru
+// calisiyordu. Ikinci bir collector acildigi anda bozuluyordu: iki surecin
+// de kendi map'i vardi, ikisi de ayni ihlali "yeni" sanip webhook
+// gonderiyordu. Yani yatay olceklendirme sistemi calismaz hale
+// getirmiyordu - daha sinsi bir sey yapiyordu: her alarmi iki kez
+// bildiriyordu.
 type AlertEngine struct {
 	session  *gocql.Session
 	logger   *zap.Logger
 	client   *http.Client
 	interval time.Duration
 
-	// firing: su anda tetiklenmis kurallar. Bu durum olmadan her
-	// degerlendirme turunda ayni alarm tekrar tekrar gonderilir -
-	// klasik "alarm spam" problemi.
-	mu     sync.Mutex
-	firing map[string]bool
+	// owner: bu surecin adi. Gecisi kimin yaptigini kaydeder; hata
+	// ayiklarken "hangi collector bildirdi" sorusunun cevabi.
+	owner string
 }
 
 // NewAlertEngine: alarm motorunu olusturur.
-func NewAlertEngine(session *gocql.Session, logger *zap.Logger, interval time.Duration) *AlertEngine {
+func NewAlertEngine(session *gocql.Session, logger *zap.Logger, interval time.Duration, owner string) *AlertEngine {
 	if interval <= 0 {
 		interval = defaultEvalInterval
+	}
+	if owner == "" {
+		owner = "unknown"
 	}
 	return &AlertEngine{
 		session:  session,
 		logger:   logger,
 		client:   &http.Client{Timeout: 10 * time.Second},
 		interval: interval,
-		firing:   make(map[string]bool),
+		owner:    owner,
 	}
+}
+
+// transitionResult: bir gecis denemesinin sonucu.
+//
+// Ilk surum bunu bool ile ifade ediyordu ve iki farkli seyi tek degere
+// sikistiriyordu: "yarisi kaybettim" ile "yapacak bir sey yoktu". Sonuc,
+// yalan soyleyen bir olcuydu - kural sakin sakin dururken her
+// degerlendirme turu "kaybedildi" olarak sayiliyor, panelde de bu
+// "sistem yaris cozuyor" gibi gorunuyordu. Uc durum uc deger ister.
+type transitionResult int
+
+const (
+	// transitionNone: durum zaten istenen halde, gecis gerekmedi.
+	// Normal isleyiste turlerin buyuk cogunlugu budur ve sayilmaz.
+	transitionNone transitionResult = iota
+	// transitionWon: gecisi bu surec yapti, bildirimden o sorumlu.
+	transitionWon
+	// transitionLost: baska bir collector ayni gecisi once yapti.
+	// Yatay olceklendirmenin dogru calistiginin kaniti; sifirdan
+	// buyuk olmasi beklenir ve iyidir.
+	transitionLost
+)
+
+// tryTransition: kuralin durumunu !desired -> desired olarak degistirmeye
+// calisir. transitionWon dondurduyse gecisi BU surec yapti.
+//
+// Isin kalbi CQL'in IF cumlesi: hafif islem (lightweight transaction, LWT).
+// Sradan bir UPDATE "son yazan kazanir" mantigiyla calisir - iki collector
+// ayni anda firing=true yazsa ikisi de basarili olur ve iki bildirim gider.
+// IF ekledigimizde Scylla arka planda Paxos calistirir ve guncellemeyi
+// SADECE mevcut deger bekledigimiz degerse uygular. Yaristan tek kazanan
+// cikar; kaybeden applied=false alir ve sessizce gecer.
+//
+// Bedeli var: LWT normal bir yazmadan cok daha pahalidir (dort gidis-donus
+// ve dugumler arasi uzlasma). Bu yuzden SADECE durum gecisinde kullaniyoruz,
+// sicak yolda degil. Kurallar her turda degerlendiriliyor; LWT ise yalnizca
+// alarm gercekten tetiklendiginde veya cozuldugunde calisiyor - saatte
+// birkac kez.
+//
+// Not: lider secimine (leader election) gerek yok. Gecisin kendisi zaten
+// karsilikli dislama sagliyor; ayrica bir lider secip onu canli tutmaya
+// calismak daha fazla hareketli parca demekti.
+func (e *AlertEngine) tryTransition(ctx context.Context, ruleID string, desired bool) (transitionResult, error) {
+	now := time.Now().UnixMilli()
+
+	// 1) ONCE UCUZ OKUMA.
+	//
+	// Kurallar her turda degerlendiriliyor ama durum nadiren degisiyor.
+	// Her degerlendirmede dogrudan LWT calistirmak, saniyede birkac kez
+	// Paxos uzlasmasi demekti - istisnai durumun bedelini her tura
+	// yaymak. Sradan bir SELECT ise tek gidis-donus.
+	var firing bool
+	err := e.session.Query(`SELECT firing FROM alert_state WHERE rule_id = ?`, ruleID).
+		WithContext(ctx).Scan(&firing)
+
+	switch {
+	case errors.Is(err, gocql.ErrNotFound):
+		// Satir yok: kural hic tetiklenmemis demektir. Cozulecek bir sey
+		// de yok, yani yalnizca tetiklenme yonu anlamli.
+		if !desired {
+			return transitionNone, nil
+		}
+		// Satiri yaratirken IF NOT EXISTS: iki collector ayni anda ilk
+		// ihlali gorurse yalnizca biri yaratabilsin.
+		created := map[string]interface{}{}
+		applied, insErr := e.session.Query(`
+			INSERT INTO alert_state (rule_id, firing, since_ms, owner, updated_ms)
+			VALUES (?, ?, ?, ?, ?)
+			IF NOT EXISTS`,
+			ruleID, true, now, e.owner, now,
+		).WithContext(ctx).MapScanCAS(created)
+		if insErr != nil {
+			return transitionNone, fmt.Errorf("alarm durumu yaratilamadi: %w", insErr)
+		}
+		if applied {
+			return transitionWon, nil
+		}
+		return transitionLost, nil
+
+	case err != nil:
+		return transitionNone, fmt.Errorf("alarm durumu okunamadi: %w", err)
+
+	case firing == desired:
+		// Durum zaten istedigimiz gibi. Gecis yok, LWT'ye gerek yok.
+		return transitionNone, nil
+	}
+
+	// 2) GERCEK GECIS: burada Paxos'a deger.
+	//
+	// IF olmadan bu sradan bir UPDATE olurdu ve "son yazan kazanir"
+	// mantigiyla iki collector de basarili olurdu - iki bildirim.
+	// IF ile Scylla guncellemeyi yalnizca mevcut deger hala
+	// bekledigimiz degerse uygular; yaristan tek kazanan cikar.
+	//
+	// Yukaridaki SELECT ile bu UPDATE arasinda durum degismis olabilir.
+	// Bu bir sorun degil, tam da IF'in yakaladigi durum: gec kalan
+	// collector applied=false alir ve susar.
+	current := map[string]interface{}{}
+	applied, err := e.session.Query(`
+		UPDATE alert_state SET firing = ?, since_ms = ?, owner = ?, updated_ms = ?
+		WHERE rule_id = ?
+		IF firing = ?`,
+		desired, now, e.owner, now, ruleID, !desired,
+	).WithContext(ctx).MapScanCAS(current)
+	if err != nil {
+		return transitionNone, fmt.Errorf("alarm durumu guncellenemedi: %w", err)
+	}
+	if applied {
+		return transitionWon, nil
+	}
+	return transitionLost, nil
 }
 
 // Run: ctx iptal edilene kadar kurallari degerlendirir.
@@ -157,6 +303,7 @@ func (e *AlertEngine) EvaluateAll(ctx context.Context, onlyRuleID string) ([]*pb
 			continue
 		}
 
+		obs.AlertEvaluations.Inc()
 		alert, err := e.evaluateRule(ctx, rule)
 		if err != nil {
 			e.logger.Warn("Kural degerlendirilemedi",
@@ -198,18 +345,27 @@ func (e *AlertEngine) evaluateRule(ctx context.Context, rule *pb.AlertRule) (*pb
 
 	breached := cond.Breached(value)
 
-	e.mu.Lock()
-	wasFiring := e.firing[rule.RuleId]
-	switch {
-	case breached && !wasFiring:
-		e.firing[rule.RuleId] = true
-	case !breached && wasFiring:
-		delete(e.firing, rule.RuleId)
-	default:
-		e.mu.Unlock()
-		return nil, nil // durum degismedi
+	// Durumu degistirme hakkini kazanabildik mi? Kazanamadiysak ya durum
+	// zaten degismisti ya da baska bir collector ayni anda ayni gecisi
+	// yapti - iki halde de bize dusen sey susmak.
+	res, err := e.tryTransition(ctx, rule.RuleId, breached)
+	if err != nil {
+		return nil, err
 	}
-	e.mu.Unlock()
+	state := "resolved"
+	if breached {
+		state = "firing"
+	}
+	switch res {
+	case transitionNone:
+		// Durum degismedi. Sayaci artirmiyoruz: bu bir olay degil,
+		// olayin YOKLUGU. Her turu saymak olcuyu anlamsizlastirirdi.
+		return nil, nil
+	case transitionLost:
+		obs.AlertTransitions.WithLabelValues(state, "lost").Inc()
+		return nil, nil
+	}
+	obs.AlertTransitions.WithLabelValues(state, "won").Inc()
 
 	alert := buildAlert(rule, cond, value, !breached)
 
@@ -323,23 +479,30 @@ func (e *AlertEngine) computeZScore(ctx context.Context, rule *pb.AlertRule, win
 }
 
 // fetchValues: bir metrigin zaman araligindaki ham degerleri.
+//
+// Faz 4'te kova dongusu eklendi. Bu ozellikle zscore icin onemli: taban
+// cizgisi penceresi kural penceresinin 12 kati oldugundan neredeyse her
+// zaman saat sinirini asar ve tek kovadan okumak gecmisin buyuk kismini
+// gormezden gelirdi.
 func (e *AlertEngine) fetchValues(ctx context.Context, rule *pb.AlertRule, start, end time.Time) ([]float64, error) {
-	iter := e.session.Query(`
-		SELECT value FROM metrics
-		WHERE service_name = ? AND metric_name = ?
-		  AND timestamp >= ? AND timestamp <= ?`,
-		rule.ServiceName, rule.MetricName, start.UnixMilli(), end.UnixMilli(),
-	).WithContext(ctx).Iter()
+	startMs, endMs := start.UnixMilli(), end.UnixMilli()
 
-	var (
-		v      float64
-		values []float64
-	)
-	for iter.Scan(&v) {
-		values = append(values, v)
-	}
-	if err := iter.Close(); err != nil {
-		return nil, fmt.Errorf("metrik okunamadi: %w", err)
+	var values []float64
+	for _, bucket := range bucketsInRangeMax(startMs, endMs, metricBucketLimit) {
+		iter := e.session.Query(`
+			SELECT value FROM metrics
+			WHERE service_name = ? AND metric_name = ? AND time_bucket = ?
+			  AND timestamp >= ? AND timestamp <= ?`,
+			rule.ServiceName, rule.MetricName, bucket, startMs, endMs,
+		).WithContext(ctx).Iter()
+
+		var v float64
+		for iter.Scan(&v) {
+			values = append(values, v)
+		}
+		if err := iter.Close(); err != nil {
+			return nil, fmt.Errorf("metrik okunamadi: %w", err)
+		}
 	}
 	return values, nil
 }
@@ -402,13 +565,35 @@ func (e *AlertEngine) notify(ctx context.Context, url string, a *pb.Alert) {
 }
 
 // ActiveRuleIDs: su anda tetiklenmis kurallar.
+//
+// Paylasilan durumdan okunur, bu yuzden hangi collector'a sorarsan sor ayni
+// cevabi alirsin. Panelin "yaniyor" rozeti Faz 3'te hangi collector'a
+// dustugune gore degisebiliyordu; artik degismiyor.
+//
+// Tam tarama gibi gorunuyor ama tablo kural basina tek satir tutuyor -
+// yuzlerce satirlik bir tablo, milyonlarcalik degil.
 func (e *AlertEngine) ActiveRuleIDs() []string {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	out := make([]string, 0, len(e.firing))
-	for id := range e.firing {
-		out = append(out, id)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	iter := e.session.Query(`SELECT rule_id, firing FROM alert_state`).
+		WithContext(ctx).Iter()
+
+	var (
+		id     string
+		firing bool
+		out    []string
+	)
+	for iter.Scan(&id, &firing) {
+		if firing {
+			out = append(out, id)
+		}
 	}
+	if err := iter.Close(); err != nil {
+		e.logger.Warn("Alarm durumlari okunamadi", zap.Error(err))
+		return nil
+	}
+
 	sort.Strings(out)
 	return out
 }
@@ -601,6 +786,14 @@ func (s *AlertServiceServer) DeleteRule(ctx context.Context, req *pb.DeleteRuleR
 	if err := s.session.Query(`DELETE FROM alert_rules WHERE rule_id = ?`,
 		req.GetRuleId()).WithContext(ctx).Exec(); err != nil {
 		return nil, status.Errorf(codes.Internal, "kural silinemedi: %v", err)
+	}
+	// Kural gitti; durumu da gitmeli. Kalsaydi, ayni rule_id ile yeni bir
+	// kural yaratildiginda kural "tetiklenmis" dogar ve ilk gercek ihlal
+	// hic bildirilmezdi.
+	if err := s.session.Query(`DELETE FROM alert_state WHERE rule_id = ?`,
+		req.GetRuleId()).WithContext(ctx).Exec(); err != nil {
+		s.logger.Warn("Alarm durumu silinemedi",
+			zap.String("rule", req.GetRuleId()), zap.Error(err))
 	}
 	return &pb.DeleteRuleResponse{Deleted: true}, nil
 }

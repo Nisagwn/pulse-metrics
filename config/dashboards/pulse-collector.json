@@ -1,0 +1,193 @@
+{
+  "uid": "pulse-collector",
+  "title": "PulseMetrics — Collector",
+  "tags": ["pulsemetrics", "faz4"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "instance",
+        "label": "Collector",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(pulse_collector_messages_consumed_total, instance)",
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Ingest hizi (kayit/sn)",
+      "description": "Kafka mesajlarindan cozulup ScyllaDB'ye yazilan kayit sayisi. Duz sifir cizgisi ya trafik yok ya da collector durmus demektir; ikisini ayirmak icin yanindaki lag paneline bak.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "custom": { "fillOpacity": 10, "lineWidth": 2 } },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (signal) (rate(pulse_collector_records_ingested_total{instance=~\"$instance\"}[1m]))",
+          "legendFormat": "{{signal}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Kafka gecikmesi (lag)",
+      "description": "Okunmayi bekleyen mesaj sayisi. Uretimde bakilacak ILK grafik: surekli artiyorsa collector uretimden yavas kaliyor. Cozum daha fazla collector, ama partition sayisi tuketici paralelligini yukaridan sinirlar.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "fillOpacity": 10, "lineWidth": 2 },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 1000 },
+              { "color": "red", "value": 10000 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (signal, instance) (pulse_collector_kafka_lag{instance=~\"$instance\"})",
+          "legendFormat": "{{signal}} @ {{instance}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Ingest hatalari (hata/sn)",
+      "description": "kind ayrimi mudahaleyi belirler: decode = bozuk mesaj (uretici hatasi), read = Kafka sorunu, write = ScyllaDB sorunu.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "custom": { "fillOpacity": 20, "lineWidth": 1 } },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (signal, kind) (rate(pulse_collector_ingest_errors_total{instance=~\"$instance\"}[5m]))",
+          "legendFormat": "{{signal}} / {{kind}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Ingest suresi p95",
+      "description": "Bir Kafka mesajinin cozulup yazilma suresi. Artiyorsa darbogaz genelde ScyllaDB yazma gecikmesidir.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "s", "custom": { "fillOpacity": 0, "lineWidth": 2 } },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, signal) (rate(pulse_collector_ingest_duration_seconds_bucket{instance=~\"$instance\"}[5m])))",
+          "legendFormat": "p95 {{signal}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Alarm durum gecisleri",
+      "description": "Faz 4'un yatay olceklendirme kaniti. Iki collector calisirken ayni gecis icin birinde won, digerinde lost gorursun; yani alarm bir kez bildirildi. Faz 3'te ikisi de bildirirdi.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "drawStyle": "bars", "fillOpacity": 60 } },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (state, result) (increase(pulse_alert_transitions_total{instance=~\"$instance\"}[5m]))",
+          "legendFormat": "{{state}} / {{result}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Go calisma zamani",
+      "description": "Prometheus istemcisinden ucretsiz gelen olculer. Goroutine sayisinin duzenli artmasi sizinti isaretidir - collector'da bir goroutine sizintisini once burada gorursun.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "fillOpacity": 0, "lineWidth": 2 } },
+        "overrides": [
+          {
+            "matcher": { "id": "byRegexp", "options": ".*heap.*" },
+            "properties": [{ "id": "unit", "value": "bytes" }, { "id": "custom.axisPlacement", "value": "right" }]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "go_goroutines{instance=~\"$instance\"}",
+          "legendFormat": "goroutines @ {{instance}}"
+        },
+        {
+          "refId": "B",
+          "expr": "go_memstats_heap_inuse_bytes{instance=~\"$instance\"}",
+          "legendFormat": "heap @ {{instance}}"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "table",
+      "title": "Calisan surumler",
+      "description": "pulse_build_info: degeri her zaman 1, bilgisi etiketlerinde. 'Hangi surum calisiyor?' sorusunun cevabi.",
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "pulse_build_info",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true, "Value": true, "__name__": true, "job": true },
+            "renameByName": {
+              "component": "Bilesen",
+              "instance": "Adres",
+              "version": "Surum",
+              "commit": "Commit",
+              "go_version": "Go"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

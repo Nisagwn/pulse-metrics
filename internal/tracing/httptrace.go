@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 
 	pb "github.com/nisah/pulse-metrics/internal/proto"
 )
@@ -28,6 +29,169 @@ const PeerServiceAttr = "peer.service"
 // uydurmak yerine standardin ayirdigi alani kullaniyoruz.
 const tracestateKey = "pulse"
 
+// DefaultMaxOperations: bir surecin uretebilecegi farkli operasyon adi
+// sayisinin ust siniri. Asildiginda yeni adlar "<METHOD> /other" altinda
+// toplanir.
+const DefaultMaxOperations = 500
+
+// overflowOperation: kardinalite siniri asildiginda kullanilan ad.
+const overflowOperation = "/other"
+
+// MiddlewareOption: Middleware davranisini ayarlar.
+type MiddlewareOption func(*middlewareConfig)
+
+type middlewareConfig struct {
+	operationName func(*http.Request) string
+	maxOperations int
+
+	mu    sync.Mutex
+	names map[string]struct{}
+}
+
+// WithOperationName: operasyon adini kendin belirle.
+//
+// Bir yonlendirici (chi, gorilla/mux, gin) kullaniyorsan asil dogru cozum
+// budur: yolun kendisini degil, yol SABLONUNU ver.
+//
+//	tracer.Middleware(router, tracing.WithOperationName(func(r *http.Request) string {
+//	    return r.Method + " " + chi.RouteContext(r.Context()).RoutePattern()
+//	}))
+func WithOperationName(fn func(*http.Request) string) MiddlewareOption {
+	return func(c *middlewareConfig) {
+		if fn != nil {
+			c.operationName = fn
+		}
+	}
+}
+
+// WithMaxOperations: farkli operasyon adi ust siniri. 0 veya negatif =
+// sinirsiz (tavsiye edilmez).
+func WithMaxOperations(n int) MiddlewareOption {
+	return func(c *middlewareConfig) { c.maxOperations = n }
+}
+
+// name: istegin operasyon adini uretir ve kardinalite tavanini uygular.
+func (c *middlewareConfig) name(r *http.Request) string {
+	n := c.operationName(r)
+	if c.maxOperations <= 0 {
+		return n
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.names[n]; ok {
+		return n
+	}
+	if len(c.names) >= c.maxOperations {
+		// Tavan asildi. Yeni adlari tek bir kovaya topluyoruz: eksik
+		// ayrinti, patlamis bir veritabanindan iyidir. Panelde "/other"
+		// gormek, normallestirme kuralinin yetmedigini de soyler.
+		return r.Method + " " + overflowOperation
+	}
+	c.names[n] = struct{}{}
+	return n
+}
+
+// NormalizePath: yol icindeki degisken parcalari maskeler.
+//
+//	/orders/12345/items          -> /orders/{id}/items
+//	/users/8f14e45f-.../profile  -> /users/{uuid}/profile
+//	/files/a3f9c2b18d4e5f60      -> /files/{hex}
+//
+// NEDEN?
+//
+// Operasyon adi bir ETIKET. Her farkli deger ayri bir zaman serisi, ayri
+// bir satir, ayri bir panel girdisi demek. /orders/{id} yerine ham yolu
+// kullanmak, siparis sayisi kadar operasyon uretir - bir milyon siparis,
+// bir milyon "operasyon". Bu, izleme sistemlerinin en yaygin oldurucu
+// hatasi: kardinalite patlamasi.
+//
+// Faz 2'de bu risk kodda yorum olarak isaretlenmisti ama onlem alinmamisti.
+// Faz 4'te varsayilan davranis oldu.
+//
+// Not: bu bir tahmin, yonlendirici sablonunun yerini tutmaz. /orders/latest
+// gibi gercekten sabit bir parca da /orders/{id} olmaz ama /v2 gibi bir
+// parca sayi icerdigi icin yanlis maskelenebilir. Elinde yonlendirici
+// varsa WithOperationName kullan; bu, olmadigi durum icin guvenlik agi.
+func NormalizePath(path string) string {
+	if path == "" || path == "/" {
+		return path
+	}
+
+	segments := strings.Split(path, "/")
+	changed := false
+	for i, seg := range segments {
+		if seg == "" {
+			continue
+		}
+		if masked := maskSegment(seg); masked != seg {
+			segments[i] = masked
+			changed = true
+		}
+	}
+	if !changed {
+		return path
+	}
+	return strings.Join(segments, "/")
+}
+
+func maskSegment(seg string) string {
+	if isUUID(seg) {
+		return "{uuid}"
+	}
+
+	digits, letters, other := 0, 0, 0
+	hex := true
+	for _, r := range seg {
+		switch {
+		case r >= '0' && r <= '9':
+			digits++
+		case (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F'):
+			letters++
+		case (r >= 'g' && r <= 'z') || (r >= 'G' && r <= 'Z'):
+			letters++
+			hex = false
+		default:
+			other++
+			hex = false
+		}
+	}
+
+	switch {
+	case digits > 0 && letters == 0 && other == 0:
+		// Saf sayi: en yaygin kimlik bicimi.
+		return "{id}"
+	case hex && len(seg) >= 16:
+		// Uzun onaltilik dizi: karma, jeton, icerik kimligi.
+		return "{hex}"
+	case digits >= 3 && len(seg) >= 8:
+		// "order-2024-8891" gibi karisik kimlikler.
+		return "{id}"
+	}
+	return seg
+}
+
+// isUUID: 8-4-4-4-12 onaltilik bicim.
+func isUUID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for i, r := range s {
+		switch i {
+		case 8, 13, 18, 23:
+			if r != '-' {
+				return false
+			}
+		default:
+			isHex := (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')
+			if !isHex {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // Middleware: gelen HTTP isteklerini otomatik olarak enstrumante eder.
 //
 // Yaptigi is:
@@ -41,12 +205,30 @@ const tracestateKey = "pulse"
 //	mux := http.NewServeMux()
 //	mux.HandleFunc("/orders", handler)
 //	http.ListenAndServe(":8080", tracer.Middleware(mux))
-func (t *Tracer) Middleware(next http.Handler) http.Handler {
+func (t *Tracer) Middleware(next http.Handler, opts ...MiddlewareOption) http.Handler {
+	cfg := &middlewareConfig{
+		// Varsayilan: yolu normallestir. Faz 2-3'te ham yol
+		// kullaniliyordu ve /orders/12345 her siparis icin ayri bir
+		// operasyon uretiyordu.
+		operationName: func(r *http.Request) string {
+			return r.Method + " " + NormalizePath(r.URL.Path)
+		},
+		maxOperations: DefaultMaxOperations,
+		names:         make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		opts := []SpanOption{
 			WithSpanKind(pb.SpanKind_SPAN_KIND_SERVER),
 			WithAttributes(map[string]string{
 				"http.method": r.Method,
+				// http.target HAM yolu tasir: tekil bir istegi
+				// incelerken gercek /orders/12345'i gormek gerekir.
+				// Kardinalite sorunu yalnizca gruplama anahtari olan
+				// operasyon adinda vardir, ozniteliklerde degil.
 				"http.target": r.URL.Path,
 				"http.host":   r.Host,
 				"net.peer.ip": clientIP(r),
@@ -68,11 +250,8 @@ func (t *Tracer) Middleware(next http.Handler) http.Handler {
 			}
 		}
 
-		// Operasyon adi olarak "GET /orders" gibi bir sey kullaniyoruz.
-		// Dikkat: r.URL.Path'i dogrudan kullanmak /orders/12345 gibi
-		// yollarda kardinalite patlamasina yol acar. Gercek bir sistemde
-		// yonlendirici sablonu ("/orders/{id}") kullanilmali.
-		name := r.Method + " " + r.URL.Path
+		// Operasyon adi: normallestirilmis ve kardinalitesi tavanli.
+		name := cfg.name(r)
 
 		ctx, span := t.Start(r.Context(), name, opts...)
 		defer span.End()

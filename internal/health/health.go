@@ -20,6 +20,9 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+
+	"github.com/nisah/pulse-metrics/internal/buildinfo"
+	"github.com/nisah/pulse-metrics/internal/obs"
 )
 
 // Check: bir bagimliligin erisilebilirligini sinar. nil = saglikli.
@@ -64,7 +67,7 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response{
 		Status:  "ok",
 		Uptime:  time.Since(s.started).Round(time.Second).String(),
-		Version: "week1",
+		Version: buildinfo.Get().Version,
 	})
 }
 
@@ -99,7 +102,7 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 		Status:  status,
 		Uptime:  time.Since(s.started).Round(time.Second).String(),
 		Checks:  results,
-		Version: "week1",
+		Version: buildinfo.Get().Version,
 	})
 }
 
@@ -114,6 +117,15 @@ func writeJSON(w http.ResponseWriter, code int, body response) {
 func (s *Server) Handler(mux *http.ServeMux) {
 	mux.HandleFunc("/healthz", s.handleHealthz)
 	mux.HandleFunc("/readyz", s.handleReadyz)
+
+	// /metrics: surecin KENDI olculeri, Prometheus bicimde.
+	//
+	// Neden saglik sunucusunda? Cunku ucu de ayni soruyu farkli
+	// ayrintida cevapliyor: /healthz "yasiyor mu", /readyz "is
+	// yapabiliyor mu", /metrics "ne kadar iyi yapiyor". Ayni port
+	// uzerinde durmalari, orkestratorde tek bir yonetim portu
+	// tanimlamayi yeterli kilar.
+	mux.Handle("/metrics", obs.Handler())
 }
 
 // Serve: HTTP sunucusunu baslatir ve ctx iptal edilene kadar calistirir.

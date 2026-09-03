@@ -1,0 +1,23 @@
+# Grafana pano saglayicisi.
+#
+# Faz 3'e kadar Grafana bos aciliyordu: bir Prometheus veri kaynagi vardi
+# ama Prometheus'un kazidigi PulseMetrics hedefi yoktu, pano da yoktu.
+# Faz 4'te collector kendi olculerini yayinlamaya basladigi icin artik
+# gosterilecek bir sey var.
+#
+# Bu dosya Grafana'ya "su dizindeki JSON panolari yukle" der. Panolar
+# dosyadan geldigi icin surum kontrolunde durur ve konteyner silinip
+# yeniden kurulunca kaybolmaz.
+apiVersion: 1
+
+providers:
+  - name: 'PulseMetrics'
+    orgId: 1
+    folder: 'PulseMetrics'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/pulse
+      foldersFromFilesStructure: false

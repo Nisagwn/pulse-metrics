@@ -1,8 +1,28 @@
 apiVersion: 1
 
+# deleteDatasources: sabit bir uid EKLENDIGINDE gerekli.
+#
+# Grafana veri kaynaklarini adla degil uid ile eslestirir. Daha once
+# uid'siz saglanmis bir kaynak varsa Grafana ona rastgele bir uid
+# uretmistir; dosyaya sonradan "uid: prometheus" yazmak, Grafana'nin
+# var olmayan bir uid'i guncellemeye calismasina ve hic ACILMAMASINA
+# yol acar:
+#
+#   Datasource provisioning error: data source not found
+#
+# Eskisini once silmek islemi idempotent yapar: hem temiz kurulumda
+# hem de eski birimin uzerinde calisir.
+deleteDatasources:
+  - name: Prometheus
+    orgId: 1
+
 datasources:
   - name: Prometheus
     type: prometheus
+    # uid sabit: panolar veri kaynagina bu kimlikle referans veriyor.
+    # Verilmezse Grafana rastgele uretir ve dosyadan yuklenen panolar
+    # "datasource not found" der.
+    uid: prometheus
     access: proxy
     url: http://prometheus:9090
     isDefault: true

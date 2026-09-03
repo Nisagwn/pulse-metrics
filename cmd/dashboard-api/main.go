@@ -25,7 +25,10 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/nisah/pulse-metrics/internal/buildinfo"
+	"github.com/nisah/pulse-metrics/internal/config"
 	"github.com/nisah/pulse-metrics/internal/health"
+	"github.com/nisah/pulse-metrics/internal/obs"
 	pb "github.com/nisah/pulse-metrics/internal/proto"
 )
 
@@ -44,9 +47,17 @@ func newLogger() (*zap.Logger, error) {
 }
 
 func main() {
-	addr := flag.String("addr", ":8080", "HTTP listen address")
-	collectorAddr := flag.String("collector", "localhost:50051", "Collector gRPC address")
+	addr := flag.String("addr", config.Env("PULSE_HTTP_ADDR", ":8080"), "HTTP dinleme adresi")
+	collectorAddr := flag.String("collector", config.Env("PULSE_COLLECTOR_ADDR", "localhost:50051"),
+		"Collector gRPC adresi")
+	showVersion := flag.Bool("version", false, "Surumu yaz ve cik")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println("pulse-dashboard-api", buildinfo.Get().String())
+		return
+	}
+	obs.SetBuildInfo("dashboard-api", config.InstanceID(""))
 
 	logger, err := newLogger()
 	if err != nil {

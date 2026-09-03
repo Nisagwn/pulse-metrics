@@ -5,37 +5,57 @@ global:
     cluster: 'pulse-local'
     env: 'development'
 
-# Alertmanager configuration
 alerting:
   alertmanagers:
     - static_configs:
         - targets: []
 
-# Load rules files
 rule_files:
-  # - "alerts.yml"  # TBD: Add alert rules
+  # - "alerts.yml"
 
+# PulseMetrics'in KENDI olculeri.
+#
+# Dairesel bagimliliktan kacinmak icin PulseMetrics kendini izlemez:
+# collector coktugunde bunu haber verecek sey baska bir sistem olmali.
+# Buradaki Prometheus tam olarak o sistem.
+#
+# Adresler hakkinda: host.docker.internal, konteynerin icinden ANA
+# MAKINEYI gosterir. Bu, sureclerin "go run" ile makinede calistigi
+# gelistirme akisi icindir. Konteynerde calistiriyorsan
+# (docker-compose.apps.yml) config/prometheus-apps.yml kullanilir; orada
+# hedefler servis adlaridir.
 scrape_configs:
-  # Prometheus self-monitoring
   - job_name: 'prometheus'
     static_configs:
       - targets: ['localhost:9090']
 
-  # PulseCity (reference application)
-  - job_name: 'pulse-city'
+  - job_name: 'pulse-collector'
     scrape_interval: 10s
     static_configs:
-      - targets: ['localhost:8080']
-    relabel_configs:
-      - source_labels: [__address__]
-        target_label: instance
+      - targets: ['host.docker.internal:8082']
+        labels:
+          component: 'collector'
 
-  # Kafka broker metrics (if using JMX exporter)
+  - job_name: 'pulse-agent'
+    scrape_interval: 15s
+    static_configs:
+      - targets: ['host.docker.internal:8081']
+        labels:
+          component: 'agent'
+
+  - job_name: 'pulse-dashboard-api'
+    scrape_interval: 15s
+    static_configs:
+      - targets: ['host.docker.internal:8080']
+        labels:
+          component: 'dashboard-api'
+
+  # Kafka JMX exporter (kurulursa)
   # - job_name: 'kafka'
   #   static_configs:
-  #     - targets: ['localhost:9999']
+  #     - targets: ['kafka:9999']
 
-  # ScyllaDB metrics (if Prometheus exporter enabled)
+  # ScyllaDB'nin kendi Prometheus ucu 9180'de yayin yapar
   # - job_name: 'scylladb'
   #   static_configs:
-  #     - targets: ['localhost:9180']
+  #     - targets: ['scylladb:9180']

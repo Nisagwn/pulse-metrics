@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/nisah/pulse-metrics/internal/obs"
 	pb "github.com/nisah/pulse-metrics/internal/proto"
 )
 
@@ -38,9 +39,9 @@ func NewMetricsService(session *gocql.Session, logger *zap.Logger, started time.
 
 // Query: bir metrigin zaman araligindaki degerlerini instance bazinda dondurur.
 //
-// Sorgu tek bir partition'a iner: WHERE service_name = ? AND metric_name = ?
-// partition key'i tam olarak belirler, timestamp araligi da o partition icinde
-// sirali okuma yapar. Tarama yok.
+// Her sorgu partition key'i TAM olarak belirler: (service_name, metric_name,
+// time_bucket). Zaman araligi birden fazla saate yayiliyorsa kova basina bir
+// okuma yapilir; hicbirinde tarama yok, hepsi dogrudan partition erisimi.
 func (s *MetricsService) Query(ctx context.Context, req *pb.MetricsQueryRequest) (*pb.MetricsQueryResponse, error) {
 	if req.GetServiceName() == "" || req.GetMetricName() == "" {
 		return nil, status.Error(codes.InvalidArgument,
@@ -69,25 +70,22 @@ func (s *MetricsService) Query(ctx context.Context, req *pb.MetricsQueryRequest)
 	}
 
 	began := time.Now()
+	defer func() {
+		obs.QueryDuration.WithLabelValues("Query", "ok").Observe(time.Since(began).Seconds())
+	}()
 
-	cql := `SELECT timestamp, instance_id, type, tags, value FROM metrics
-	        WHERE service_name = ? AND metric_name = ? AND timestamp >= ? AND timestamp <= ?`
-	args := []interface{}{req.GetServiceName(), req.GetMetricName(), start, end}
-
-	// instance_id son clustering kolonu oldugu icin dogrudan esitlik verirsek
-	// ALLOW FILTERING gerekiyor. Tek partition icinde kaldigimiz ve zaman
-	// araligiyla sinirli oldugumuz icin bu guvenli ve sinirli bir tarama.
-	if inst := req.GetInstanceId(); inst != "" {
-		cql += ` AND instance_id = ?`
-		args = append(args, inst)
-	}
-	cql += ` LIMIT ?`
-	args = append(args, limit)
-	if req.GetInstanceId() != "" {
-		cql += ` ALLOW FILTERING`
-	}
-
-	iter := s.session.Query(cql, args...).WithContext(ctx).Iter()
+	// Faz 4: partition key'e time_bucket girdi. Sorgu artik tek bir
+	// partition'a degil, araligi kapsayan saatlik kovalara iniyor.
+	//
+	// Ilk bakista gerileme gibi gorunuyor - bir okuma yerine N okuma.
+	// Degil: Cassandra/Scylla'da coklu partition okumasi olagan ve
+	// paralellestirilebilir bir erisim bicimi, cunku her kova farkli bir
+	// dugumde olabilir. Kaybettigimiz sey tek istekte bitirme kolayligi;
+	// kazandigimiz sey partition'larin sinirsiz buyumemesi. Ikincisi
+	// olceklenen sistemde her zaman daha degerli.
+	baseCQL := `SELECT timestamp, instance_id, type, tags, value FROM metrics
+	            WHERE service_name = ? AND metric_name = ? AND time_bucket = ?
+	              AND timestamp >= ? AND timestamp <= ?`
 
 	// instance_id basina bir seri topluyoruz.
 	type seriesAcc struct {
@@ -98,28 +96,55 @@ func (s *MetricsService) Query(ctx context.Context, req *pb.MetricsQueryRequest)
 	}
 	order := []string{}
 	byInstance := map[string]*seriesAcc{}
+	total := 0
 
-	var (
-		ts         int64
-		instanceID string
-		metricType string
-		tags       map[string]string
-		value      float64
-	)
-	for iter.Scan(&ts, &instanceID, &metricType, &tags, &value) {
-		acc, ok := byInstance[instanceID]
-		if !ok {
-			acc = &seriesAcc{instanceID: instanceID, metricType: metricType, tags: tags}
-			byInstance[instanceID] = acc
-			order = append(order, instanceID)
+	for _, bucket := range bucketsInRangeMax(start, end, metricBucketLimit) {
+		if total >= limit {
+			break
 		}
-		acc.points = append(acc.points, &pb.DataPoint{TimestampMs: ts, Value: value})
-		// tags her satirda yeniden tahsis edilir; kopyayi sifirla.
-		tags = nil
-	}
-	if err := iter.Close(); err != nil {
-		s.logger.Error("Query failed", zap.Error(err), zap.String("metric", req.GetMetricName()))
-		return nil, status.Errorf(codes.Internal, "sorgu basarisiz: %v", err)
+
+		cql := baseCQL
+		args := []interface{}{req.GetServiceName(), req.GetMetricName(), bucket, start, end}
+
+		// instance_id son clustering kolonu oldugu icin dogrudan esitlik
+		// verirsek ALLOW FILTERING gerekiyor. Tek partition icinde
+		// kaldigimiz ve zaman araligiyla sinirli oldugumuz icin bu
+		// guvenli ve sinirli bir tarama.
+		if inst := req.GetInstanceId(); inst != "" {
+			cql += ` AND instance_id = ?`
+			args = append(args, inst)
+		}
+		cql += ` LIMIT ?`
+		args = append(args, limit-total)
+		if req.GetInstanceId() != "" {
+			cql += ` ALLOW FILTERING`
+		}
+
+		iter := s.session.Query(cql, args...).WithContext(ctx).Iter()
+
+		var (
+			ts         int64
+			instanceID string
+			metricType string
+			tags       map[string]string
+			value      float64
+		)
+		for iter.Scan(&ts, &instanceID, &metricType, &tags, &value) {
+			acc, ok := byInstance[instanceID]
+			if !ok {
+				acc = &seriesAcc{instanceID: instanceID, metricType: metricType, tags: tags}
+				byInstance[instanceID] = acc
+				order = append(order, instanceID)
+			}
+			acc.points = append(acc.points, &pb.DataPoint{TimestampMs: ts, Value: value})
+			total++
+			// tags her satirda yeniden tahsis edilir; kopyayi sifirla.
+			tags = nil
+		}
+		if err := iter.Close(); err != nil {
+			s.logger.Error("Query failed", zap.Error(err), zap.String("metric", req.GetMetricName()))
+			return nil, status.Errorf(codes.Internal, "sorgu basarisiz: %v", err)
+		}
 	}
 
 	agg := strings.ToLower(strings.TrimSpace(req.GetAggregation()))
@@ -159,21 +184,30 @@ func (s *MetricsService) Query(ctx context.Context, req *pb.MetricsQueryRequest)
 
 // ListSeries: bilinen (servis, metrik) ciftlerini dondurur.
 //
-// SELECT DISTINCT partition key kolonlari uzerinde calisir; Scylla her
-// partition icin tek satir dondurur, tum veriyi okumaz.
+// SELECT DISTINCT yalnizca partition key kolonlari uzerinde calisir; Scylla
+// her partition icin tek satir dondurur, satirlarin icerigini okumaz.
 func (s *MetricsService) ListSeries(ctx context.Context, req *pb.ListSeriesRequest) (*pb.ListSeriesResponse, error) {
-	iter := s.session.Query(`SELECT DISTINCT service_name, metric_name FROM metrics`).
+	// DISTINCT tum partition key kolonlarini istemek zorunda; time_bucket
+	// de partition key'in parcasi oldugu icin ayni (servis, metrik) cifti
+	// her saat icin bir kez doner. Tekrarlari burada eliyoruz.
+	iter := s.session.Query(`SELECT DISTINCT service_name, metric_name, time_bucket FROM metrics`).
 		WithContext(ctx).Iter()
 
 	var (
-		svc, metric string
-		out         []*pb.SeriesRef
+		svc, metric, bucket string
+		out                 []*pb.SeriesRef
 	)
+	seen := map[string]bool{}
 	filter := req.GetServiceName()
-	for iter.Scan(&svc, &metric) {
+	for iter.Scan(&svc, &metric, &bucket) {
 		if filter != "" && svc != filter {
 			continue
 		}
+		key := svc + "\x00" + metric
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
 		out = append(out, &pb.SeriesRef{ServiceName: svc, MetricName: metric})
 	}
 	if err := iter.Close(); err != nil {

@@ -1,0 +1,103 @@
+# PulseMetrics uygulama katmani.
+#
+# docker-compose.yml altyapiyi kaldirir (Kafka, ScyllaDB, Prometheus,
+# Grafana). Bu dosya PulseMetrics'in kendi sureclerini kaldirir.
+#
+#   docker compose up -d                                      # altyapi
+#   docker compose -f docker-compose.apps.yml up -d --build    # uygulamalar
+#
+# Neden ayri dosya? Gelistirirken cogu zaman altyapiyi konteynerde,
+# kodu ise makinede calistirmak istersin - "go run" ile yeniden
+# derleme saniyeler surer, imaj yeniden insa etmek dakikalar.
+#
+# IKI COLLECTOR neden var?
+#
+# Faz 4'un asil iddiasini gosteriyor: collector artik yatay
+# olceklenebiliyor. Ikisi ayni consumer group'ta oldugu icin Kafka
+# partition'lari aralarinda BOLUSTURUR - ayni mesaji ikisi birden
+# islemez. Alarm motoru ikisinde de calisir ama paylasilan durum
+# sayesinde bir alarm yalnizca BIR kez bildirilir.
+#
+# Dogrulamak icin:
+#   curl -s localhost:8092/metrics | grep pulse_alert_transitions
+#   curl -s localhost:8093/metrics | grep pulse_alert_transitions
+# Birinde result="won", digerinde result="lost" gorursun.
+
+services:
+  collector-1:
+    build:
+      context: .
+      args:
+        CMD_NAME: collector
+    container_name: pulse-collector-1
+    environment:
+      PULSE_KAFKA_BROKERS: kafka:29092
+      PULSE_SCYLLA_HOSTS: scylladb:9042
+      PULSE_INSTANCE_ID: collector-1
+      PULSE_GRPC_PORT: "50051"
+      PULSE_HEALTH_ADDR: ":8082"
+    ports:
+      - "50051:50051"
+      - "8092:8082"
+    restart: unless-stopped
+    healthcheck:
+      # distroless'ta kabuk ve curl yok; ikilinin kendisi -version ile
+      # cevap verebiliyorsa surec saglam demektir. Bagimlilik kontrolu
+      # /readyz'de, orkestratordeki readinessProbe onu kullanmali.
+      test: ["CMD", "/app", "-version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  collector-2:
+    build:
+      context: .
+      args:
+        CMD_NAME: collector
+    container_name: pulse-collector-2
+    environment:
+      PULSE_KAFKA_BROKERS: kafka:29092
+      PULSE_SCYLLA_HOSTS: scylladb:9042
+      PULSE_INSTANCE_ID: collector-2
+      PULSE_GRPC_PORT: "50051"
+      PULSE_HEALTH_ADDR: ":8082"
+    ports:
+      - "50052:50051"
+      - "8093:8082"
+    restart: unless-stopped
+
+  dashboard-api:
+    build:
+      context: .
+      args:
+        CMD_NAME: dashboard-api
+    container_name: pulse-dashboard-api
+    environment:
+      # Tek bir collector'a baglaniyor. Gercek bir dagitimda buraya
+      # collector'larin onunde duran bir servis adi/yuk dengeleyici
+      # yazilir; ikisi de ayni ScyllaDB'yi okudugu icin hangisine
+      # sorduğun sonucu degistirmez.
+      PULSE_COLLECTOR_ADDR: collector-1:50051
+      PULSE_HTTP_ADDR: ":8080"
+    ports:
+      - "8080:8080"
+    depends_on:
+      - collector-1
+    restart: unless-stopped
+
+  demo:
+    build:
+      context: .
+      args:
+        CMD_NAME: demo
+    container_name: pulse-demo
+    environment:
+      PULSE_KAFKA_BROKERS: kafka:29092
+    depends_on:
+      - collector-1
+    restart: unless-stopped
+
+networks:
+  default:
+    name: pulse-network
+    external: true

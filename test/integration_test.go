@@ -132,18 +132,24 @@ func scyllaSession(t *testing.T) *gocql.Session {
 // cleanupService: testin yazdigi satirlari siler.
 func cleanupService(t *testing.T, sess *gocql.Session, service string) {
 	t.Cleanup(func() {
-		iter := sess.Query(`SELECT DISTINCT service_name, metric_name FROM metrics`).Iter()
-		var svc, metric string
-		var toDelete []string
-		for iter.Scan(&svc, &metric) {
+		// Faz 4: partition key artik (service_name, metric_name,
+		// time_bucket). DISTINCT ucunu birden dondurur ve DELETE
+		// ucunu birden ister - kismi partition key ile silinemez.
+		iter := sess.Query(`SELECT DISTINCT service_name, metric_name, time_bucket FROM metrics`).Iter()
+		type part struct{ metric, bucket string }
+		var (
+			svc, metric, bucket string
+			toDelete            []part
+		)
+		for iter.Scan(&svc, &metric, &bucket) {
 			if svc == service {
-				toDelete = append(toDelete, metric)
+				toDelete = append(toDelete, part{metric, bucket})
 			}
 		}
 		_ = iter.Close()
-		for _, m := range toDelete {
-			_ = sess.Query(`DELETE FROM metrics WHERE service_name = ? AND metric_name = ?`,
-				service, m).Exec()
+		for _, p := range toDelete {
+			_ = sess.Query(`DELETE FROM metrics WHERE service_name = ? AND metric_name = ? AND time_bucket = ?`,
+				service, p.metric, p.bucket).Exec()
 		}
 	})
 }
