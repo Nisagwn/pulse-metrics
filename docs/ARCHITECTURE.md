@@ -1,5 +1,25 @@
 # PulseMetrics Architecture
 
+> **Status of this document:** this is the original design written before
+> Phase 1. Several parts describe plans that were changed or not built. The
+> README and `docs/OPERATIONS.md` describe the system as implemented. The
+> main differences:
+>
+> | This document says | The code does |
+> |---|---|
+> | Agent uses the OpenTelemetry SDK, collects CPU/disk/memory, traces and logs | `cmd/agent` sends four Go runtime metrics of its own process. Traces and logs come from the native SDK (`pkg/tracing`, `pkg/logging`) or from any OpenTelemetry SDK via `cmd/otlp-gateway` (OTLP gRPC :4317 / HTTP :4318) |
+> | Redis cache for query results and alerts | Not used by any code. Alert state lives in ScyllaDB (`alert_state`, lightweight transactions) |
+> | Collector deduplicates, aggregates and uses batch inserts | One `INSERT` per record, no batching (deliberate: different partitions), no deduplication. Aggregation happens at query time |
+> | Database errors -> retry with backoff; "metrics not lost (buffered in Kafka)" | Offsets are committed automatically (`ReadMessage` with a consumer group). A failed ScyllaDB write is logged and skipped, so data consumed during an outage is lost (at-most-once) |
+> | Collector is stateless with no shared state | Ingest is stateless; alerting shares state through ScyllaDB LWT |
+> | `metrics` key `((service_name, metric_name), timestamp)` | `((service_name, metric_name, time_bucket), timestamp, instance_id)`, hourly bucket, 30-day TTL |
+> | `spans` key `((trace_id), span_id)` | `(trace_id, start_time_micros, span_id)` plus `trace_index`, `service_ops`, `service_edges`, `edge_pairs`; 7-day TTL |
+> | `logs` key `((service_name), timestamp)` | `((service_name, time_bucket), timestamp_ms, log_id)` plus `trace_logs` |
+> | Kafka: 12 partitions, RF 3, single topic `pulse` | Three topics (`pulse-metrics`, `pulse-traces`, `pulse-logs`); `make topics` sets 3 partitions locally |
+> | React + TypeScript, Recharts, D3 | React 18 from a CDN in one embedded HTML file, no TypeScript or build step |
+> | Performance numbers (100k+ metrics/sec, < 100ms end-to-end, ...) | Design targets, not measured. No benchmark exists in the repository |
+> | The system monitors itself with its own agents | Deliberately not: Prometheus scrapes `/metrics` on every binary, Grafana shows a provisioned dashboard |
+
 ## High-Level System Design
 
 ```
