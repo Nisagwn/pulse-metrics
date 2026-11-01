@@ -1,6 +1,6 @@
 # PulseMetrics - APM Platform
 
-A production-grade Application Performance Monitoring (APM) platform built from scratch using Go, Kafka, ScyllaDB, and React.
+An Application Performance Monitoring (APM) platform built from scratch using Go, Kafka, ScyllaDB and gRPC, with an OTLP (OpenTelemetry) receiver and an embedded React dashboard. It is a learning project with production-minded design decisions (horizontal scaling, schema migration, self-observability, CI) - not a hardened production system: there is no authentication yet and ingest is at-most-once (see [Next Steps](#next-steps)).
 
 [![CI](https://github.com/Nisagwn/pulse-metrics/actions/workflows/ci.yml/badge.svg)](https://github.com/Nisagwn/pulse-metrics/actions/workflows/ci.yml)
 
@@ -15,17 +15,19 @@ PulseMetrics is a distributed systems monitoring platform that collects metrics,
 ### Core Components
 
 ```
-Service 1      Service 2      Service N
-    ↓              ↓              ↓
-  Agent          Agent          Agent  (collect metrics/traces/logs)
-    ↓              ↓              ↓
-    └──────────→ Kafka ←─────────┘  (buffer, partition)
-                    ↓
-              Collector (Go)  (consume, validate, aggregate)
-                    ↓
-              ScyllaDB  (time-series storage)
-                    ↓
-         React Dashboard  (visualize, query, alert)
+ Go services                      Any language
+ ───────────────────────────      ─────────────────────────
+ Agent      (runtime metrics)     OpenTelemetry SDK
+ pkg/tracing (spans)                   ↓  OTLP gRPC :4317 / HTTP :4318
+ pkg/logging (logs)               otlp-gateway (OTLP -> PulseMetrics protobuf)
+       ↓                               ↓
+       └────────────→ Kafka ←──────────┘  pulse-metrics / pulse-traces / pulse-logs
+                        ↓
+                 Collector (Go)  consume, validate, write; alert engine;
+                   ↓      ↑      gRPC read API (Metrics/Trace/Log/AlertService)
+                   ↓      └───── dashboard-api  (HTTP/JSON + embedded React UI,
+                   ↓                             gRPC client of the collector)
+                 ScyllaDB        time-bucketed tables, TTL
 ```
 
 ---
@@ -34,11 +36,13 @@ Service 1      Service 2      Service N
 
 | Component | Technology | Why |
 |-----------|-----------|-----|
-| Agent | Go + OpenTelemetry | Lightweight, high-performance |
+| Agent | Go (`runtime.MemStats`) | Sends its own process' Go runtime metrics; no OpenTelemetry SDK inside |
+| Trace / log SDK | Go (`pkg/tracing`, `pkg/logging`) | Native SDK, W3C Trace Context compatible with OpenTelemetry |
+| OTLP gateway | Go + gRPC + HTTP | Accepts OTLP traces, metrics and logs from any OpenTelemetry SDK |
 | Collector | Go + gRPC | Scalable, type-safe |
 | Storage | ScyllaDB | High-throughput time-series |
-| Message Queue | Kafka | Decouples agents, high availability |
-| Dashboard | React + TypeScript | Modern UX, real-time updates |
+| Message Queue | Kafka | Decouples producers from the collector, absorbs bursts |
+| Dashboard | React 18 (CDN, single embedded HTML, no build step) | Simple to ship; no TypeScript yet |
 | Monitoring | Prometheus + Grafana | Observe the observers |
 
 ---
@@ -56,7 +60,9 @@ pulse-metrics/
 │   │   ├── main.go
 │   │   ├── traces.go
 │   │   └── web/index.html
-│   └── demo/               # Four traced microservices + load generator
+│   ├── demo/               # Four traced microservices + load generator
+│   ├── otlp-gateway/       # OTLP receiver (gRPC :4317, HTTP :4318) -> Kafka
+│   └── pulse-migrate/      # Phase 4 metrics schema migration tool
 ├── internal/
 │   ├── agent/              # Agent implementation
 │   │   └── agent.go
@@ -73,15 +79,14 @@ pulse-metrics/
 │   ├── buildinfo/          # Version stamped in via -ldflags
 │   ├── config/             # Env config + startup validation
 │   ├── obs/                # Self-metrics (Prometheus)
-pkg/                        # importable from other modules
+├── pkg/                    # meant to be importable from other modules (see Phase 5 note on the module path)
 │   ├── pulsepb/            # generated protobuf types (committed on purpose)
 │   ├── logging/            # Log SDK: trace-correlated structured logging
 │   └── tracing/            # Trace SDK: spans, W3C context, HTTP instrumentation
-│   │   ├── context.go      #   TraceID/SpanID, traceparent parse & format
-│   │   ├── tracer.go       #   Tracer, Span, samplers
-│   │   ├── exporter.go     #   Batching Kafka exporter
-│   │   └── httptrace.go    #   Middleware (server) + Transport (client)
-│   └── proto/              # Generated protobuf files (auto-generated)
+│       ├── context.go      #   TraceID/SpanID, traceparent parse & format
+│       ├── tracer.go       #   Tracer, Span, samplers
+│       ├── exporter.go     #   Batching Kafka exporter
+│       └── httptrace.go    #   Middleware (server) + Transport (client)
 ├── proto/                  # Protocol Buffer definitions
 │   ├── metrics.proto
 │   ├── traces.proto
@@ -102,14 +107,14 @@ pkg/                        # importable from other modules
 ### Prerequisites
 
 - Docker & Docker Compose
-- Go 1.21+
-- Protocol Buffers compiler (protoc)
+- Go 1.25+ (see `go.mod`)
+- Protocol Buffers compiler (protoc) - only if you change `proto/*.proto`; generated code is committed
 
 ### 1. Start Infrastructure
 
 ```bash
 # Clone repo
-git clone https://github.com/nisah/pulse-metrics.git
+git clone https://github.com/Nisagwn/pulse-metrics.git
 cd pulse-metrics
 
 # Start Kafka, ScyllaDB, Prometheus, Grafana
@@ -129,11 +134,13 @@ docker-compose ps
 # macOS: brew install protobuf
 # Linux: apt-get install protobuf-compiler
 
-# Generate Go code from proto files
-protoc --go_out=internal/proto --go_opt=paths=source_relative \
-       --go-grpc_out=internal/proto --go-grpc_opt=paths=source_relative \
-       proto/*.proto
+# Install the pinned protoc plugins, then regenerate pkg/pulsepb
+make tools
+make proto
 ```
+
+Generated code lives in `pkg/pulsepb` and is committed, so this step is only
+needed after editing `proto/*.proto`. CI fails if the committed code drifts.
 
 ### 3. Build Agent
 
@@ -163,12 +170,8 @@ cd ../..
 ./bin/collector --kafka localhost:9092 --scylla localhost:9042 --debug
 ```
 
-Expected output:
-```
-Starting metrics collector on gRPC port 50051
-Collector started
-Keyspace and tables ensured
-```
+The collector logs structured JSON (zap). Look for `Schema ensured`,
+`Collector started`, `gRPC server listening` and `Health server listening`.
 
 ### 6. Run Agent (in another terminal)
 
@@ -176,11 +179,10 @@ Keyspace and tables ensured
 ./bin/agent --service test-app --kafka localhost:9092 --debug --interval 5s
 ```
 
-Expected output:
-```
-Starting APM agent for service=test-app instance=default
-Metrics published: count=4 payload_size=123
-```
+With `--debug` the agent logs a `Metrics published` line (fields `count` and
+`payload_size`) on every tick. It reports four Go runtime metrics of its own
+process: `process.memory.heap.alloc`, `process.memory.heap.total`,
+`process.memory.gc.runs` and `process.runtime.goroutines`.
 
 ### 6b. Run Dashboard API (third terminal)
 
@@ -191,13 +193,15 @@ Metrics published: count=4 payload_size=123
 
 ### 6c. Check Health
 
-Every service exposes liveness and readiness endpoints:
+Every service exposes liveness (`/healthz`), readiness (`/readyz`) and
+Prometheus metrics (`/metrics`):
 
-| Service       | Health address        |
-|---------------|-----------------------|
-| agent         | `:8081`               |
-| collector     | `:8082`               |
-| dashboard-api | `:8080` (same port)   |
+| Service       | Health address        | Readiness check        |
+|---------------|-----------------------|------------------------|
+| agent         | `:8081`               | Kafka                  |
+| collector     | `:8082`               | ScyllaDB               |
+| otlp-gateway  | `:8085`               | Kafka (first broker)   |
+| dashboard-api | `:8080` (same port)   | collector gRPC Health  |
 
 ```bash
 curl localhost:8082/readyz
@@ -332,9 +336,9 @@ docker exec -it pulse-scylladb cqlsh
 ### 8. View in Grafana
 
 - Open http://localhost:3000
-- Login: admin / admin
-- Add Prometheus datasource (http://prometheus:9090)
-- Create dashboard to visualize metrics
+- Login: admin / admin (local development default only)
+- The Prometheus datasource and the **PulseMetrics -> Collector** dashboard are
+  provisioned automatically from `config/` - nothing to add by hand
 
 ---
 
@@ -345,7 +349,8 @@ docker exec -it pulse-scylladb cqlsh
 1. Edit `proto/*.proto`
 2. Regenerate Go code:
    ```bash
-   make proto  # (TBD: add Makefile)
+   make tools  # once: pinned protoc plugins
+   make proto
    ```
 3. Rebuild binaries
 4. Restart services
@@ -380,7 +385,7 @@ Agent & Collector support `--debug` flag for verbose logging:
 - [x] Docker Compose development environment
 - [x] Protocol Buffer schemas (metrics, traces, logs)
 - [x] Go project structure
-- [x] Agent: collects system metrics → Kafka
+- [x] Agent: collects Go runtime metrics of its own process (heap, GC, goroutines) → Kafka
 - [x] Collector: Kafka consumer → ScyllaDB
 - [x] gRPC query service (`MetricsService`: Query, ListSeries, Health)
 - [x] Dashboard API + simple React dashboard
@@ -392,7 +397,7 @@ Agent & Collector support `--debug` flag for verbose logging:
 
 ## Phase 2: Distributed Tracing (Weeks 5-10) - complete
 
-- [x] Trace SDK (`internal/tracing`) - spans, samplers, batching exporter
+- [x] Trace SDK (`internal/tracing`, moved to `pkg/tracing` in Phase 5) - spans, samplers, batching exporter
 - [x] Trace context propagation (W3C `traceparent` / `tracestate`)
 - [x] HTTP middleware + client transport for auto-instrumentation
 - [x] Trace schema in ScyllaDB (`spans`, `trace_index`, `service_ops`)
@@ -418,7 +423,7 @@ change because the wire format is the standard one.
 
 ## Phase 3: Advanced Features (Weeks 11-18) - complete
 
-- [x] Log aggregation & search (`internal/logging`, `pulse.logs`, `pulse.trace_logs`)
+- [x] Log aggregation & search (`internal/logging`, now `pkg/logging`; tables `pulse.logs`, `pulse.trace_logs`)
 - [x] **Trace-log correlation** - logs carry `trace_id` automatically from context
 - [x] Log pattern detection (variable masking + error correlation)
 - [x] Alert rules engine with state tracking, webhooks and resolve notifications
@@ -453,6 +458,14 @@ The fix was at the source. The SDK now carries the caller's service name in the
 W3C `tracestate` header (the field the standard reserves for exactly this), so a
 SERVER span arrives already knowing who called it, in `peer.service`. The
 collector writes the edge during ingest, with **no extra read**.
+
+Note on the attribute name: in the OpenTelemetry semantic conventions
+`peer.service` describes the *remote* service and is normally set (manually)
+on CLIENT spans. PulseMetrics reuses the name on SERVER spans to mean "the
+caller". Spans from the native SDK fill it in automatically; spans from a
+standard OpenTelemetry SDK usually do not, so for OTLP-only services the
+service map stays empty unless the SERVER span carries `peer.service` set to
+the caller's name (as `examples/otlp-curl.sh` does).
 
 Result on the demo workload: `GetTopology` went from sampling ~27 calls per edge
 to counting all 180, and got faster doing it.
@@ -583,7 +596,7 @@ partition ends) minus `OffsetFetch` (where the group has committed).
 ## Phase 5: Opening Up (OTLP) - complete
 
 - [x] **OTLP receiver** (`cmd/otlp-gateway`) - gRPC :4317 and HTTP :4318
-- [x] SDK moved out of `internal/` so other projects can import it
+- [x] SDK moved out of `internal/` so other projects can import it (but see the module path caveat below)
 - [x] Generated protobuf code committed (a module has to build for its consumers)
 - [x] CI (GitHub Actions): unit, integration, generated-code drift, container builds
 - [x] Stale `alert_state` row can no longer silence a rule
@@ -595,6 +608,12 @@ this repository. Go's `internal/` rule made that a compiler-enforced limit:
 `import "github.com/nisah/pulse-metrics/internal/tracing"` fails to build
 from any other module. So the system could only observe programs that were
 (a) written in Go and (b) inside this repo.
+
+**Module path caveat:** `go.mod` declares `module github.com/nisah/pulse-metrics`,
+but the repository lives at `github.com/Nisagwn/pulse-metrics`. Until the
+module path matches the repository URL, `go get` for `pkg/tracing` or
+`pkg/logging` from another module does not resolve. The OTLP path below is
+unaffected.
 
 OTLP is the common language of observability. Python, Java, Node, Rust,
 .NET - every official OpenTelemetry SDK speaks it. Accepting it turns "a
@@ -648,6 +667,13 @@ partition, same timestamp, same `instance_id`: the clustering key would
 collide and only the last bucket would survive. Exactly the silent data
 loss `instance_id` caused back in Phase 1.
 
+**Known limitation:** the same collision still applies to every *other*
+data-point attribute. Two OTLP points of one metric that differ only in
+attributes (for example `http.route=/a` and `http.route=/b`) from the same
+instance at the same timestamp map to the same primary key, and the last
+write wins. OpenTelemetry SDKs export all attribute sets of a metric with the
+same timestamp, so per-attribute breakdowns are currently not preserved.
+
 ### A standards conflict worth knowing about
 
 Protobuf's official JSON mapping encodes `bytes` as base64. The OTLP
@@ -674,10 +700,18 @@ PULSE_KAFKA_BROKERS=localhost:9092
 PULSE_COLLECT_INTERVAL=10s
 
 # Collector
-PULSE_SCYLLA_ADDR=localhost:9042
+PULSE_SCYLLA_HOSTS=localhost:9042
 PULSE_KAFKA_BROKERS=localhost:9092
 PULSE_GRPC_PORT=50051
+PULSE_HEALTH_ADDR=:8082
+
+# OTLP gateway
+PULSE_OTLP_GRPC_ADDR=:4317
+PULSE_OTLP_HTTP_ADDR=:4318
 ```
+
+The full list (ScyllaDB keyspace, consistency, replication, timeouts, topic
+names) is in `docs/OPERATIONS.md`.
 
 ### Config Files
 
@@ -686,17 +720,14 @@ PULSE_GRPC_PORT=50051
 
 ---
 
-## API References (TBD)
+## API References
 
-### Agent SDK (Go)
+### Go SDK
 
-```go
-import "github.com/nisah/pulse-metrics/pkg/sdk"
-
-agent := sdk.NewAgent("my-service")
-agent.RecordMetric("request.latency", 150.5)
-agent.RecordEvent("user.login", map[string]string{"user_id": "123"})
-```
+There is no `pkg/sdk` package. The Go-facing surface is `pkg/tracing`
+(spans, HTTP middleware and client, see "Instrumenting your own service"
+above) and `pkg/logging` (trace-correlated logs). Any other language sends
+data through the OTLP gateway.
 
 ### Collector gRPC (implemented)
 
@@ -719,23 +750,38 @@ service TraceService {
 }
 ```
 
+```protobuf
+service LogService {
+  rpc QueryLogs(LogsQueryRequest) returns (LogsQueryResponse);
+  rpc GetTraceLogs(GetTraceLogsRequest) returns (LogsQueryResponse);
+  rpc ListLogServices(ListLogServicesRequest) returns (ListLogServicesResponse);
+  rpc DetectPatterns(DetectPatternsRequest) returns (LogAnomalies);
+}
+```
+
+```protobuf
+service AlertService {
+  rpc CreateRule(AlertRule) returns (CreateRuleResponse);
+  rpc ListRules(ListRulesRequest) returns (ListRulesResponse);
+  rpc DeleteRule(DeleteRuleRequest) returns (DeleteRuleResponse);
+  rpc ListAlerts(ListAlertsRequest) returns (ListAlertsResponse);
+  rpc EvaluateRules(EvaluateRulesRequest) returns (EvaluateRulesResponse);
+}
+```
+
+The OTLP gateway additionally serves the standard OpenTelemetry collector
+services (`TraceService`, `MetricsService`, `LogsService` `Export`) on `:4317`
+and `POST /v1/traces`, `/v1/metrics`, `/v1/logs` (protobuf or JSON) on `:4318`.
+
 ---
 
 ## Monitoring PulseMetrics Itself
 
-Monitor the collector and agent using Prometheus:
-
-```yaml
-# prometheus.yml
-scrape_configs:
-  - job_name: 'pulse-agent'
-    static_configs:
-      - targets: ['localhost:8080']  # Agent prometheus endpoint (TBD)
-  
-  - job_name: 'pulse-collector'
-    static_configs:
-      - targets: ['localhost:8081']  # Collector prometheus endpoint (TBD)
-```
+Every binary serves Prometheus metrics at `/metrics` on its health port
+(agent `:8081`, collector `:8082`, otlp-gateway `:8085`, dashboard-api `:8080`).
+`config/prometheus.yml` already scrapes the agent, collector and dashboard-api
+via `host.docker.internal`; `config/prometheus-apps.yml` is the variant for
+`docker-compose.apps.yml`. See "Self-observability" above.
 
 ---
 
@@ -751,7 +797,7 @@ docker-compose ps kafka
 docker-compose logs kafka | grep "started"
 
 # Test connectivity
-docker-compose exec kafka kafka-broker-api-versions --bootstrap-servers localhost:9092
+docker-compose exec kafka kafka-broker-api-versions --bootstrap-server localhost:9092
 ```
 
 ### Collector can't connect to ScyllaDB
@@ -771,10 +817,13 @@ docker exec -it pulse-scylladb cqlsh -e "DESCRIBE KEYSPACES;"
    docker-compose logs -f kafka  # Watch for messages
    ```
 
-2. Verify collector is consuming:
+2. Verify collector is consuming (run it with `--debug` to see a
+   `Metrics stored` line per payload), and check its counters:
    ```bash
-   docker-compose logs -f collector  # Check for "Metrics stored"
+   curl -s localhost:8082/metrics | grep pulse_collector
    ```
+   When the collector runs in containers (`docker-compose.apps.yml`) use
+   `docker logs pulse-collector-1` instead.
 
 3. Check ScyllaDB has data:
    ```bash
@@ -787,18 +836,19 @@ docker exec -it pulse-scylladb cqlsh -e "DESCRIBE KEYSPACES;"
 
 Phases are divided by feature area. Each phase builds on the previous:
 
-1. **Phase 1 (Complete):** Metrics collection
+1. **Phase 1:** Metrics collection
 2. **Phase 2:** Distributed tracing
-3. **Phase 3:** Analytics & alerting
-4. **Phase 4:** Production hardening
+3. **Phase 3:** Logs, alerting, anomaly detection, topology
+4. **Phase 4:** Production readiness (scaling, migration, self-observability)
+5. **Phase 5:** OTLP receiver, importable SDK, CI
 
-See `APM_PROJECT_PLAN.md` for detailed roadmap.
+All five are complete; open items are listed under Next Steps.
 
 ---
 
 ## License
 
-MIT (placeholder)
+Not licensed yet: the repository has no `LICENSE` file (MIT is planned).
 
 ---
 
@@ -830,6 +880,14 @@ What is still open, honestly:
 - **OTLP exponential histograms are rejected.** They encode bucket bounds from
   a base and scale rather than listing them; convertible, but there is no
   PulseMetrics representation for them yet.
+- **Ingest is at-most-once.** The Kafka readers use `ReadMessage` with a
+  consumer group, which commits offsets automatically. If a ScyllaDB write
+  fails the error is logged (and, for metrics only, counted in
+  `pulse_collector_ingest_errors_total`) but the message is not retried and its offset is still committed, so a
+  ScyllaDB outage loses the data consumed during it. Manual commit after a
+  successful write plus a dead-letter topic is the fix.
+- **OTLP metric attributes are not part of the key** (see Phase 5): points that
+  differ only in attributes overwrite each other.
 - **The migration tool stops the world.** Correct at this size, wrong at
   production volume - `docs/OPERATIONS.md` describes the dual-write alternative
   that needs no downtime and no copying.

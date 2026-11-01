@@ -329,10 +329,16 @@ curl -s localhost:8085/metrics | grep pulse_otlp
 desteklenmeyen metrik türü), `reason="kafka"` altyapı sorunu — ikisi
 tamamen farklı müdahale ister.
 
-**Servis haritası OTLP verisiyle de çalışır.** Faz 3'te topolojiyi
-`peer.service` özniteliğinden çıkarıyorduk; bu OTel'in *standart*
-özniteliği, yani harici bir SDK gönderdiğinde harita kendiliğinden
-doluyor.
+**Servis haritası OTLP verisiyle ancak `peer.service` varsa çalışır.**
+Topoloji, SERVER span'lerindeki `peer.service` özniteliğinden (çağıran
+servisin adı) çıkarılıyor. Ad OTel'in standart özniteliği olsa da OTel
+semantic conventions'ta anlamı farklı: *uzak* (çağrılan) servisi belirtir
+ve genellikle CLIENT span'lerine elle konur. Standart bir OTel SDK'sı
+SERVER span'ine çağıranın adını kendiliğinden yazmaz; bu yüzden yalnızca
+OTLP gönderen servislerde harita, span'e `peer.service` = çağıran servis
+eklenmedikçe boş kalır (`examples/otlp-curl.sh` bunu elle ekliyor).
+Yerel Go SDK'sı (`pkg/tracing`) ise bu alanı `tracestate` üzerinden
+otomatik dolduruyor.
 
 **Histogramlar metrik adına açılır** (`http.duration_bucket_le_0.5`).
 Sebebi bölüm 8'deki tabloyla aynı: etiketler partition key'in parçası
